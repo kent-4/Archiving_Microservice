@@ -1,0 +1,17 @@
+# Web Framework
+Flask
+
+# Database and Storage
+pymongo
+boto3
+redis
+
+# Search and Indexing
+elasticsearch>=8.0.0,<9.0.0
+
+# Monitoring
+prometheus-client
+prometheus-flask-exporter
+
+# Utilities
+python-dotenv

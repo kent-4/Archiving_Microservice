@@ -1,0 +1,92 @@
+# In docker-compose.yml
+
+version: '3.8'
+
+services:
+  # 'archiving-app' is a service at the top level
+  archiving-app:
+    build: .
+    container_name: archiving-app
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    # 'depends_on' is INDENTED under 'archiving-app'
+    # This tells Docker to start mongo and elasticsearch before the app
+    depends_on:
+      mongo:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  # 'prometheus' is another service at the top level
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    depends_on:
+      - archiving-app
+
+  # 'grafana' is another service at the top level
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  # 'mongo' is another service at the top level
+  mongo:
+    image: mongo:5.0
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 'elasticsearch' is another service at the top level
+  elasticsearch:
+    image: elasticsearch:8.4.3
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+ 
+
+# 'volumes' is at the top level, same as 'services'
+volumes:
+  mongo-data:
+  es-data:

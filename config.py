@@ -1,0 +1,24 @@
+# In config.py
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SECRET_API_KEY = os.getenv("SECRET_API_KEY")
+
+# MongoDB Configuration
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_DB_NAME = "archiving_db"
+
+# AWS S3 Configuration
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+
+# Redis Configuration
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+
+# Elasticsearch Configuration
+ELASTICSEARCH_HOST = os.getenv("ELASTICSEARCH_HOST", "http://localhost:9200")

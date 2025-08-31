@@ -1,0 +1,9 @@
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'archiving-microservice'
+    static_configs:
+      # Use the service name from docker-compose, not a host IP
+      - targets: ['archiving-app:5000']
