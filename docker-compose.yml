@@ -16,8 +16,6 @@ services:
     # 'depends_on' is INDENTED under 'archiving-app'
     # This tells Docker to start mongo and elasticsearch before the app
     depends_on:
-      mongo:
-        condition: service_healthy
       elasticsearch:
         condition: service_healthy
 
@@ -43,19 +41,8 @@ services:
     depends_on:
       - prometheus
 
-  # 'mongo' is another service at the top level
-  mongo:
-    image: mongo:5.0
-    container_name: mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  
+  
 
   # 'elasticsearch' is another service at the top level
   elasticsearch:
@@ -88,5 +75,4 @@ services:
 
 # 'volumes' is at the top level, same as 'services'
 volumes:
-  mongo-data:
   es-data:

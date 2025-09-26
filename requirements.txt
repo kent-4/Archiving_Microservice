@@ -5,6 +5,7 @@ Flask
 pymongo
 boto3
 redis
+certifi
 
 # Search and Indexing
 elasticsearch>=8.0.0,<9.0.0

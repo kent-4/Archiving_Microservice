@@ -3,11 +3,14 @@
 import uuid
 from datetime import datetime, timezone
 from .s3_service import upload_to_s3, create_presigned_url
-from .mongo_service import save_metadata, find_metadata_by_id, db
+from .mongo_service import save_metadata, find_metadata_by_id, get_db
 from . import elasticsearch_service
 from . import redis_service
 
-failed_index_collection = db["failed_indexes"]
+def get_failed_index_collection():
+    """Get the failed_indexes collection from MongoDB"""
+    db = get_db()
+    return db["failed_indexes"]
 
 def archive_file(file):
     filename = file.filename
@@ -33,11 +36,17 @@ def archive_file(file):
         elasticsearch_service.index_document(document=metadata_for_es)
     except Exception as e:
         print(f"Warning: Failed to index metadata for file_id {file_id}. Adding to retry queue. Error: {e}")
-        failed_index_collection.insert_one({
-            "file_id": file_id,
-            "reason": str(e),
-            "timestamp": datetime.now(timezone.utc)
-        })
+        
+        # Get the collection dynamically when needed
+        try:
+            failed_index_collection = get_failed_index_collection()
+            failed_index_collection.insert_one({
+                "file_id": file_id,
+                "reason": str(e),
+                "timestamp": datetime.now(timezone.utc)
+            })
+        except Exception as db_error:
+            print(f"Error: Could not save failed index to MongoDB: {db_error}")
 
     if "_id" in metadata:
         metadata["_id"] = str(metadata["_id"])
@@ -46,7 +55,7 @@ def archive_file(file):
 
 def get_archived_file(file_id):
     cached_metadata = redis_service.get_from_cache(key=file_id)
-    if cached_metadata:
+    if cached_metadata is not None:  # FIXED: Explicit None check
         object_name = cached_metadata.get("filename")
         download_url = create_presigned_url(object_name)
         cached_metadata["download_url"] = download_url
@@ -54,7 +63,7 @@ def get_archived_file(file_id):
 
     metadata = find_metadata_by_id(file_id)
 
-    if not metadata:
+    if metadata is None:  # FIXED: Explicit None check
         return None
 
     # --- THIS IS THE FIX ---

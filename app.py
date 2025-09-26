@@ -5,6 +5,7 @@ from services.archiving_service import archive_file, get_archived_file
 from prometheus_flask_exporter import PrometheusMetrics
 from prometheus_client import Counter
 from services import elasticsearch_service
+from services import mongo_service
 from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
 import time
 
@@ -88,18 +89,42 @@ def connect_to_elasticsearch_with_retry():
         try:
             # Attempt to create the index, which serves as a connection check
             elasticsearch_service.create_index_if_not_exists()
-            print("Successfully connected to Elasticsearch and ensured index exists.")
+            print("✅ Successfully connected to Elasticsearch and ensured index exists.")
             return True
         except ESConnectionError as e:
-            print(f"Elasticsearch connection failed (attempt {i+1}/{retries}): {e}. Retrying in {delay} seconds...")
+            print(f"❌ Elasticsearch connection failed (attempt {i+1}/{retries}): {e}. Retrying in {delay} seconds...")
             time.sleep(delay)
-    print("!!! Critical Error: Could not connect to Elasticsearch after several retries.")
+    print("❌ Critical Error: Could not connect to Elasticsearch after several retries.")
+    return False
+
+def connect_to_mongodb_with_retry():
+    """Tries to connect to MongoDB, retrying a few times on failure."""
+    retries = 3
+    delay = 2  # seconds
+    for i in range(retries):
+        try:
+            if mongo_service.initialize_mongodb():
+                return True
+        except Exception as e:
+            print(f"❌ MongoDB connection failed (attempt {i+1}/{retries}): {e}. Retrying in {delay} seconds...")
+            time.sleep(delay)
+    print("❌ Critical Error: Could not connect to MongoDB after several retries.")
     return False
 
 if __name__ == '__main__':
-    # Connect to services with retry logic before starting the app
-    if connect_to_elasticsearch_with_retry():
-        app.run(host='0.0.0.0', port=5000)
-    else:
-        # Exit with an error code if we can't connect to critical services
+    print("🚀 Starting application...")
+    
+    # Connect to MongoDB first
+    mongodb_connected = connect_to_mongodb_with_retry()
+    if not mongodb_connected:
+        print("❌ Failed to connect to MongoDB. Exiting...")
         exit(1)
+    
+    # Connect to Elasticsearch
+    elasticsearch_connected = connect_to_elasticsearch_with_retry()
+    if not elasticsearch_connected:
+        print("❌ Failed to connect to Elasticsearch. Exiting...")
+        exit(1)
+    
+    print("✅ All services connected successfully!")
+    app.run(host='0.0.0.0', port=5000)

@@ -1,70 +1,108 @@
 # In services/elasticsearch_service.py
 
-from elasticsearch import Elasticsearch
-from elasticsearch import ApiError # Use ApiError for version 8+
+from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
 from config import ELASTICSEARCH_HOST
 
-# Initialize the Elasticsearch client
-es_client = Elasticsearch(hosts=[ELASTICSEARCH_HOST])
-ARCHIVE_INDEX = "archives" # Name of the index
+# Initialize Elasticsearch client
+es_client = Elasticsearch([ELASTICSEARCH_HOST])
 
-def check_connection():
-    """Checks if the connection to Elasticsearch is established."""
-    return es_client.ping()
+INDEX_NAME = "archived_files"
 
 def create_index_if_not_exists():
-    """Creates the 'archives' index with an explicit mapping if it doesn't already exist."""
-    if not es_client.indices.exists(index=ARCHIVE_INDEX):
-        try:
-            # --- PERFORMANCE IMPROVEMENT ---
-            # Define an explicit mapping for more efficient storage and accurate searching.
+    """Create the Elasticsearch index if it doesn't exist"""
+    try:
+        if not es_client.indices.exists(index=INDEX_NAME):
+            # Define index mapping
             mapping = {
-                "properties": {
-                    "file_id": {"type": "keyword"},
-                    "filename": {"type": "text"},
-                    "s3_url": {"type": "keyword"},
-                    "content_type": {"type": "keyword"},
-                    "archived_at": {"type": "date"},
-                    "status": {"type": "keyword"}
+                "mappings": {
+                    "properties": {
+                        "file_id": {"type": "keyword"},
+                        "filename": {"type": "text", "analyzer": "standard"},
+                        "content_type": {"type": "keyword"},
+                        "s3_url": {"type": "keyword"},
+                        "archived_at": {"type": "date"},
+                        "status": {"type": "keyword"}
+                    }
                 }
             }
-            es_client.indices.create(index=ARCHIVE_INDEX, mappings=mapping)
-            print(f"Index '{ARCHIVE_INDEX}' created with explicit mapping.")
-        except ApiError as e: # Catch the correct exception
-            print(f"!!! Critical Error creating Elasticsearch index: {e}")
-            raise
-
-def index_document(document):
-    """Indexes a metadata document in Elasticsearch."""
-    try:
-        doc_id = document.get("file_id")
-        
-        if "_id" in document:
-            del document["_id"]
-        
-        # In ES v8+, the 'body' parameter is renamed to 'document'
-        es_client.index(index=ARCHIVE_INDEX, id=doc_id, document=document)
-        print(f"Document {doc_id} indexed successfully in Elasticsearch.")
-    except ApiError as e: # Catch the correct exception
-        print(f"!!! Critical Error indexing document in Elasticsearch: {e}")
-        # This 'raise' will propagate the error up to the archiving_service
+            
+            es_client.indices.create(index=INDEX_NAME, body=mapping)
+            print(f"✅ Created Elasticsearch index: {INDEX_NAME}")
+        else:
+            print(f"✅ Elasticsearch index {INDEX_NAME} already exists")
+    except Exception as e:
+        print(f"❌ Error creating Elasticsearch index: {e}")
         raise
 
-def search_documents(query_string):
-    """Searches for documents in the 'archives' index."""
+def index_document(document):
+    """Index a document in Elasticsearch"""
     try:
-        query = {
+        response = es_client.index(
+            index=INDEX_NAME,
+            id=document.get("file_id"),
+            body=document
+        )
+        print(f"✅ Indexed document {document.get('file_id')} in Elasticsearch")
+        return response
+    except Exception as e:
+        print(f"❌ Error indexing document in Elasticsearch: {e}")
+        raise
+
+def search_documents(query_string, size=10):
+    """Search documents in Elasticsearch"""
+    try:
+        search_body = {
             "query": {
                 "multi_match": {
                     "query": query_string,
-                    "fields": ["filename", "content_type"]
+                    "fields": ["filename", "content_type"],
+                    "fuzziness": "AUTO"
                 }
-            }
+            },
+            "size": size
         }
-        # In ES v8+, the 'body' parameter is renamed to 'query' for the search method
-        response = es_client.search(index=ARCHIVE_INDEX, query=query['query'])
-        hits = [hit['_source'] for hit in response['hits']['hits']]
-        return hits
-    except ApiError as e: # Catch the correct exception
-        print(f"!!! Critical Error searching Elasticsearch: {e}")
+        
+        response = es_client.search(index=INDEX_NAME, body=search_body)
+        
+        # Extract hits from response
+        hits = response.get("hits", {}).get("hits", [])
+        results = []
+        
+        for hit in hits:
+            source = hit.get("_source", {})
+            source["_score"] = hit.get("_score", 0)
+            results.append(source)
+        
+        print(f"✅ Found {len(results)} documents matching query: {query_string}")
+        return {
+            "total": response.get("hits", {}).get("total", {}).get("value", 0),
+            "results": results
+        }
+        
+    except Exception as e:
+        print(f"❌ Error searching documents in Elasticsearch: {e}")
         raise
+
+def delete_document(file_id):
+    """Delete a document from Elasticsearch"""
+    try:
+        response = es_client.delete(index=INDEX_NAME, id=file_id)
+        print(f"✅ Deleted document {file_id} from Elasticsearch")
+        return response
+    except Exception as e:
+        print(f"❌ Error deleting document from Elasticsearch: {e}")
+        raise
+
+def test_elasticsearch_connection():
+    """Test Elasticsearch connection"""
+    try:
+        info = es_client.info()
+        if info is not None:  # FIXED: Explicit None check
+            print("✅ Successfully connected to Elasticsearch")
+            return True
+        else:
+            print("❌ Elasticsearch connection failed: No response")
+            return False
+    except Exception as e:
+        print(f"❌ Elasticsearch connection failed: {e}")
+        return False

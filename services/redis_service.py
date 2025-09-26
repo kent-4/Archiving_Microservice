@@ -4,41 +4,59 @@ import redis
 import json
 from config import REDIS_HOST, REDIS_PORT
 
-try:
-    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    redis_client.ping()
-    print("Successfully connected to Redis.")
-except redis.exceptions.ConnectionError as e:
-    print(f"!!! Critical Error: Could not connect to Redis. Caching will be disabled. Error: {e}")
-    redis_client = None
+# Initialize Redis client
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-CACHE_EXPIRATION_SECONDS = 3600
+def test_redis_connection():
+    """Test Redis connection"""
+    try:
+        redis_client.ping()
+        print("✅ Successfully connected to Redis")
+        return True
+    except redis.ConnectionError as e:
+        print(f"❌ Redis connection failed: {e}")
+        return False
+
+def set_to_cache(key, value, expiration=3600):
+    """
+    Cache a value with an expiration time (default 1 hour).
+    """
+    try:
+        # Convert value to JSON string for storage
+        json_value = json.dumps(value)
+        redis_client.setex(key, expiration, json_value)
+        print(f"✅ Cached value for key: {key}")
+    except Exception as e:
+        print(f"❌ Error caching value for key {key}: {e}")
 
 def get_from_cache(key):
-    if not redis_client:
-        return None
-        
+    """
+    Retrieve a value from cache.
+    """
     try:
-        cached_data = redis_client.get(key)
-        if cached_data:
-            print(f"Cache HIT for key: {key}")
-            return json.loads(cached_data)
+        cached_value = redis_client.get(key)
+        if cached_value is not None:  # FIXED: Explicit None check
+            # Parse JSON string back to Python object
+            return json.loads(cached_value)
+        return None
+    except json.JSONDecodeError as e:
+        print(f"❌ Error parsing cached value for key {key}: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Error retrieving cached value for key {key}: {e}")
+        return None
+
+def delete_from_cache(key):
+    """
+    Delete a value from cache.
+    """
+    try:
+        result = redis_client.delete(key)
+        if result > 0:
+            print(f"✅ Deleted cached value for key: {key}")
         else:
-            print(f"Cache MISS for key: {key}")
-            return None
-    except redis.exceptions.RedisError as e:
-        print(f"Warning: Redis GET command failed. Error: {e}")
-        return None
-
-def set_to_cache(key, value):
-    if not redis_client:
-        return
-
-    try:
-        serialized_value = json.dumps(value)
-        redis_client.setex(key, CACHE_EXPIRATION_SECONDS, serialized_value)
-        print(f"Successfully cached data for key: {key}")
-    # --- THIS IS THE FIX ---
-    # Catch both Redis errors and TypeErrors from JSON serialization.
-    except (redis.exceptions.RedisError, TypeError) as e:
-        print(f"Warning: Redis SET command failed. Value might not be JSON serializable. Error: {e}")
+            print(f"⚠️  No cached value found for key: {key}")
+        return result > 0
+    except Exception as e:
+        print(f"❌ Error deleting cached value for key {key}: {e}")
+        return False
