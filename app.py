@@ -1,31 +1,37 @@
-# In app.py
-
 from flask import Flask, request, jsonify
 from functools import wraps
-from config import SECRET_API_KEY # We'll replace usage of this
-from services.archiving_service import archive_file, get_archived_file
-from prometheus_flask_exporter import PrometheusMetrics
-from prometheus_client import Counter
-from services import elasticsearch_service
-from services import mongo_service
-from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
+from config import SECRET_API_KEY 
 import time
-import datetime # --- NEW ---
+import datetime
+import os # <-- Make sure os is imported
+import uuid # <-- Make sure uuid is imported
 
 # --- NEW IMPORTS FOR AUTH ---
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import (
     create_access_token, get_jwt_identity, jwt_required, JWTManager,
-    set_access_cookies, unset_jwt_cookies # <-- For HttpOnly cookies
+    set_access_cookies, unset_jwt_cookies 
 )
 from pymongo.errors import DuplicateKeyError
 from flask_cors import CORS
-# --- END NEW IMPORTS ---
 
+# --- SERVICE IMPORTS ---
+from services.archiving_service import (
+    archive_file_in_memory, # <-- RENAMED
+    get_archived_file,
+    finalize_multipart_archive
+)
+from services import (
+    elasticsearch_service, 
+    mongo_service,
+    s3_service # <-- IMPORTED
+)
+from prometheus_flask_exporter import PrometheusMetrics
+from prometheus_client import Counter
+from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
 
 app = Flask(__name__)
 
-# Be specific about the frontend's URL
 origins = [
     "http://localhost:3000", # For dev
     "http://localhost:3001", # For your dev
@@ -33,26 +39,17 @@ origins = [
 ]
 CORS(app, supports_credentials=True, origins=origins)
 
-
-# --- NEW: Setup Auth ---
-# Use the *old* SECRET_API_KEY as the JWT_SECRET_KEY for convenience
 app.config["JWT_SECRET_KEY"] = SECRET_API_KEY 
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(days=1)
 app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
-app.config["JWT_COOKIE_CSRF_PROTECT"] = True # Protect against CSRF
-app.config["JWT_COOKIE_SAMESITE"] = "Lax" # 'Lax' is good for web apps
+app.config["JWT_COOKIE_CSRF_PROTECT"] = True 
+app.config["JWT_COOKIE_SAMESITE"] = "Lax"
 
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
-# --- END NEW AUTH SETUP ---
-
 
 metrics = PrometheusMetrics(app)
 FILES_ARCHIVED_COUNTER = Counter('files_archived_total', 'Total number of files archived')
-
-# --- REPLACED: This decorator is no longer used ---
-# def require_api_key(f): ...
-# --- END REPLACED ---
 
 
 # --- NEW: Auth Endpoints ---
@@ -99,20 +96,29 @@ def login_user():
         if user and bcrypt.check_password_hash(user['password'], password):
             # Create access token
             access_token = create_access_token(identity=str(user['_id']))
-            return jsonify({
+            
+            # --- THIS IS THE FIX ---
+            # 1. Create the JSON response body
+            response_body = {
                 "message": "Login successful.",
-                "access_token": access_token,
                 "user": {
                     "email": user['email']
                 }
-            }), 200
+            }
+            # 2. Create the response object
+            response = jsonify(response_body)
+            
+            # 3. Set the HttpOnly cookie on the response
+            set_access_cookies(response, access_token)
+            
+            return response, 200
+            # --- END FIX ---
         else:
             return jsonify({"error": "Invalid email or password."}), 401
             
     except Exception as e:
         app.logger.error(f"Error during login: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
-# --- END NEW AUTH ENDPOINTS ---
 
 @app.route("/auth/logout", methods=["POST"])
 def logout_user():
@@ -120,7 +126,7 @@ def logout_user():
     unset_jwt_cookies(response) # Clear the HttpOnly cookie
     return response, 200
 
-# --- UPDATED: Use @jwt_required ---
+# --- THIS IS THE "SMALL FILE" ENDPOINT ---
 @app.route('/archive', methods=['POST'])
 @jwt_required()
 def handle_archive():
@@ -131,16 +137,29 @@ def handle_archive():
     if file.filename == '':
         return jsonify({"error": "No file selected for uploading"}), 400
 
+    # --- SERVER-SIDE SIZE CHECK (Optional but recommended) ---
+    MAX_SMALL_FILE_SIZE = 25 * 1024 * 1024 # 25MB
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0, os.SEEK_SET)
+    
+    if file_size > MAX_SMALL_FILE_SIZE:
+        return jsonify({"error": "File is too large for this endpoint. Use multipart upload."}), 413
+    # --- END SIZE CHECK ---
+
     try:
-        # --- NEW: Get data from form and JWT ---
         current_user_id = get_jwt_identity()
         tags_str = request.form.get('tags', '')
         tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()]
         policy = request.form.get('policy', 'standard')
-        # --- END NEW ---
         
-        # --- UPDATED: Pass new data to service ---
-        metadata = archive_file(file, user_id=current_user_id, tags=tags, archive_policy=policy)
+        # --- USE THE IN-MEMORY FUNCTION ---
+        metadata = archive_file_in_memory(
+            file, 
+            user_id=current_user_id, 
+            tags=tags, 
+            archive_policy=policy
+        )
         
         FILES_ARCHIVED_COUNTER.inc()
         return jsonify(metadata), 201
@@ -150,6 +169,92 @@ def handle_archive():
     except Exception as e:
         app.logger.error(f"An error occurred during archiving: {e}")
         return jsonify({"error": "An internal error occurred. Check the server logs."}), 500
+
+# --- THESE ARE THE "LARGE FILE" ENDPOINTS ---
+
+@app.route('/archive/start-upload', methods=['POST'])
+@jwt_required()
+def start_upload():
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({"error": "Filename is required."}), 400
+            
+        upload_id = s3_service.create_multipart_upload(filename)
+        return jsonify({"uploadId": upload_id}), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error starting multipart upload: {e}")
+        return jsonify({"error": "Could not start upload."}), 500
+
+@app.route('/archive/get-upload-part-url', methods=['POST'])
+@jwt_required()
+def get_upload_part_url():
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        upload_id = data.get('uploadId')
+        part_number = data.get('partNumber')
+        
+        if not all([filename, upload_id, part_number]):
+            return jsonify({"error": "filename, uploadId, and partNumber are required."}), 400
+            
+        presigned_url = s3_service.generate_presigned_part_url(upload_id, filename, part_number)
+        
+        if presigned_url:
+            return jsonify({"url": presigned_url}), 200
+        else:
+            return jsonify({"error": "Could not generate presigned URL."}), 500
+            
+    except Exception as e:
+        app.logger.error(f"Error getting part URL: {e}")
+        return jsonify({"error": "Could not get part URL."}), 500
+
+@app.route('/archive/complete-upload', methods=['POST'])
+@jwt_required()
+def complete_upload():
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        upload_id = data.get('uploadId')
+        parts = data.get('parts')
+        tags_str = data.get('tags', '')
+        tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()]
+        policy = data.get('policy', 'standard')
+        file_size = data.get('fileSize')
+        content_type = data.get('contentType', 'application/octet-stream')
+        
+        if not all([filename, upload_id, parts, file_size is not None]):
+            return jsonify({"error": "filename, uploadId, parts, and fileSize are required."}), 400
+
+        current_user_id = get_jwt_identity()
+        
+        metadata = finalize_multipart_archive(
+            user_id=current_user_id,
+            upload_id=upload_id,
+            filename=filename,
+            parts=parts,
+            tags=tags,
+            archive_policy=policy,
+            file_size=file_size,
+            content_type=content_type
+        )
+        
+        FILES_ARCHIVED_COUNTER.inc()
+        return jsonify(metadata), 201
+        
+    except Exception as e:
+        app.logger.error(f"Error completing multipart upload: {e}")
+        try:
+            upload_id = request.get_json().get('uploadId')
+            filename = request.get_json().get('filename')
+            if upload_id and filename:
+                s3_service.abort_multipart_upload(upload_id, filename)
+        except Exception as abort_e:
+            app.logger.error(f"Failed to abort upload {upload_id}: {abort_e}")
+            
+        return jsonify({"error": "Could not complete upload."}), 500
 
 # --- UPDATED: Use @jwt_required ---
 @app.route('/archive/<file_id>', methods=['GET'])
