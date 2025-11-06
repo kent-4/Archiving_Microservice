@@ -2,6 +2,7 @@
 
 from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
 from config import ELASTICSEARCH_HOST
+from datetime import datetime
 
 # Initialize Elasticsearch client
 es_client = Elasticsearch([ELASTICSEARCH_HOST])
@@ -12,7 +13,7 @@ def create_index_if_not_exists():
     """Create the Elasticsearch index if it doesn't exist"""
     try:
         if not es_client.indices.exists(index=INDEX_NAME):
-            # Define index mapping
+            # Define index mapping - UPDATED
             mapping = {
                 "mappings": {
                     "properties": {
@@ -21,7 +22,14 @@ def create_index_if_not_exists():
                         "content_type": {"type": "keyword"},
                         "s3_url": {"type": "keyword"},
                         "archived_at": {"type": "date"},
-                        "status": {"type": "keyword"}
+                        "status": {"type": "keyword"},
+                        
+                        # --- NEW FIELDS ---
+                        "tags": {"type": "keyword"}, # For discrete tag filtering
+                        "archive_policy": {"type": "keyword"},
+                        "size": {"type": "long"}, # For storing file size in bytes
+                        "owner_id": {"type": "keyword"} # To link files to a user
+                        # --- END NEW FIELDS ---
                     }
                 }
             }
@@ -48,32 +56,60 @@ def index_document(document):
         print(f"❌ Error indexing document in Elasticsearch: {e}")
         raise
 
-def search_documents(query_string, size=10):
-    """Search documents in Elasticsearch"""
+def search_documents(user_id, query_string, tags=None, start_date=None, end_date=None, size=10):
+    """Search documents in Elasticsearch with advanced filtering"""
     try:
+        # Base query: must match user_id
+        must_queries = [
+            {"term": {"owner_id": user_id}}
+        ]
+
+        # Add full-text search if query_string is provided
+        if query_string:
+            must_queries.append(
+                {"multi_match": {
+                    "query": query_string,
+                    "fields": ["filename", "content_type", "tags"], # Added 'tags' to search
+                    "fuzziness": "AUTO"
+                }}
+            )
+        
+        # Build filter context
+        filters = []
+        
+        # Add tags filter
+        if tags:
+            # Assuming 'tags' is a list of strings
+            filters.append({"terms": {"tags": tags}})
+            
+        # Add date range filter
+        date_range = {}
+        if start_date:
+            date_range["gte"] = start_date
+        if end_date:
+            date_range["lte"] = end_date
+        if date_range:
+            filters.append({"range": {"archived_at": date_range}})
+
         search_body = {
             "query": {
-                "multi_match": {
-                    "query": query_string,
-                    "fields": ["filename", "content_type"],
-                    "fuzziness": "AUTO"
+                "bool": {
+                    "must": must_queries,
+                    "filter": filters
                 }
             },
-            "size": size
+            "size": size,
+            "sort": [
+                {"archived_at": {"order": "desc"}} # Sort by most recent
+            ]
         }
         
         response = es_client.search(index=INDEX_NAME, body=search_body)
         
-        # Extract hits from response
         hits = response.get("hits", {}).get("hits", [])
-        results = []
+        results = [hit.get("_source", {}) for hit in hits]
         
-        for hit in hits:
-            source = hit.get("_source", {})
-            source["_score"] = hit.get("_score", 0)
-            results.append(source)
-        
-        print(f"✅ Found {len(results)} documents matching query: {query_string}")
+        print(f"✅ Found {len(results)} documents matching query")
         return {
             "total": response.get("hits", {}).get("total", {}).get("value", 0),
             "results": results
@@ -81,6 +117,71 @@ def search_documents(query_string, size=10):
         
     except Exception as e:
         print(f"❌ Error searching documents in Elasticsearch: {e}")
+        raise
+
+# --- NEW FUNCTION for Dashboard Recent Archives ---
+def get_recent_documents(user_id, size=5):
+    """Get the most recent documents for a user"""
+    try:
+        search_body = {
+            "query": {
+                "term": {"owner_id": user_id}
+            },
+            "size": size,
+            "sort": [
+                {"archived_at": {"order": "desc"}}
+            ]
+        }
+        response = es_client.search(index=INDEX_NAME, body=search_body)
+        hits = response.get("hits", {}).get("hits", [])
+        results = [hit.get("_source", {}) for hit in hits]
+        return {"results": results}
+        
+    except Exception as e:
+        print(f"❌ Error getting recent documents: {e}")
+        return {"results": []}
+
+# --- NEW FUNCTION for Dashboard Stats ---
+def get_dashboard_stats(user_id):
+    """Get dashboard stats (total items, total size, last upload) for a user"""
+    try:
+        query_body = {
+            "query": {
+                "term": {"owner_id": user_id}
+            },
+            "size": 0, # We don't need the documents, just the aggregations
+            "aggs": {
+                "total_storage": {
+                    "sum": {"field": "size"}
+                },
+                "last_upload": {
+                    "max": {"field": "archived_at"}
+                }
+            }
+        }
+        
+        response = es_client.search(index=INDEX_NAME, body=query_body)
+        
+        total_items = response.get("hits", {}).get("total", {}).get("value", 0)
+        aggs = response.get("aggregations", {})
+        
+        total_storage = aggs.get("total_storage", {}).get("value", 0)
+        last_upload_raw = aggs.get("last_upload", {}).get("value_as_string")
+
+        # Format last_upload nicely
+        if last_upload_raw:
+            last_upload = datetime.fromisoformat(last_upload_raw.replace("Z", "+00:00")).isoformat()
+        else:
+            last_upload = None
+
+        return {
+            "totalItems": total_items,
+            "storageUsed": total_storage, # In bytes
+            "lastUpload": last_upload
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting dashboard stats: {e}")
         raise
 
 def delete_document(file_id):
@@ -97,7 +198,7 @@ def test_elasticsearch_connection():
     """Test Elasticsearch connection"""
     try:
         info = es_client.info()
-        if info is not None:  # FIXED: Explicit None check
+        if info is not None:
             print("✅ Successfully connected to Elasticsearch")
             return True
         else:

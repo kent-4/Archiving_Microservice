@@ -16,3 +16,8 @@ prometheus-flask-exporter
 
 # Utilities
 python-dotenv
+
+# Authentication
+flask-bcrypt
+flask-jwt-extended
+flask_cors
