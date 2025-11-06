@@ -5,7 +5,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "./providers";
-import { Toast } from "@/components/ui/toast"; // <-- 1. This should be Toaster, not Toast
+import { Toaster } from "@/components/ui/toaster"; // <-- 1. This is the correct import
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -24,7 +24,7 @@ export default function RootLayout({
       lang="en"
       data-theme="dark"
       style={{ colorScheme: "dark" }}
-      suppressHydrationWarning={true} // <-- 2. This must be a prop of the <html> tag
+      suppressHydrationWarning={true}
     >
       <body
         className={cn(
@@ -34,7 +34,7 @@ export default function RootLayout({
       >
         <Providers>
           {children}
-          <Toast /> {/* <-- 3. This should be Toaster, not Toast */}
+          <Toaster /> {/* <-- 2. Render the Toaster here */}
         </Providers>
       </body>
     </html>

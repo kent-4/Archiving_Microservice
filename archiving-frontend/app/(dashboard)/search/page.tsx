@@ -54,35 +54,34 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 
-// --- 1. Define Types ---
+// --- 1. Define Types (UPDATED) ---
 
-// Main file metadata type
 interface ArchivedFile {
   file_id: string;
   filename: string;
+  original_filename: string; // <-- NEW
   archived_at: string;
   size: number;
   tags: string[];
   status: string;
   content_type: string;
+  original_content_type: string; // <-- NEW
   archive_policy: string;
 }
 
-// Type for the file details (including download URL)
 interface FileDetails extends ArchivedFile {
   download_url: string;
 }
 
-// Search form validation schema
+// ... (searchSchema is unchanged) ...
 const searchSchema = z.object({
   query: z.string().optional(),
   tags: z.string().optional(),
 });
 type SearchSchema = z.infer<typeof searchSchema>;
 
-// --- 2. Helper Components & Functions ---
+// --- 2. Helper Components & Functions (Unchanged) ---
 
-// Helper to format bytes (from Dashboard)
 function formatBytes(bytes: number, decimals = 2) {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
@@ -92,7 +91,6 @@ function formatBytes(bytes: number, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-// Helper to format date (from Dashboard)
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString("en-US", {
     year: "numeric",
@@ -101,7 +99,6 @@ function formatDate(dateString: string) {
   });
 }
 
-// Status Badge (from Dashboard)
 const StatusBadge = ({ status }: { status: string }) => {
   let variant: "default" | "secondary" | "destructive" = "secondary";
   if (status === "archived") variant = "default";
@@ -133,27 +130,23 @@ export default function SearchPage() {
   const { toast } = useToast();
   const auth = useAuth();
 
-  // State for search results
   const [results, setResults] = useState<ArchivedFile[]>([]);
   const [totalResults, setTotalResults] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
-
-  // State for filters
   const [date, setDate] = useState<DateRange | undefined>(undefined);
+  
   const form = useForm<SearchSchema>({
     resolver: zodResolver(searchSchema),
     defaultValues: { query: "", tags: "" },
   });
   const { query, tags } = form.watch();
 
-  // State for details modal
   const [selectedFile, setSelectedFile] = useState<ArchivedFile | null>(null);
   const [fileDetails, setFileDetails] = useState<FileDetails | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // --- 4. Data Fetching ---
+  // --- 4. Data Fetching (Unchanged, but auth fix is still here) ---
 
-  // Main search function
   const handleSearch = async () => {
     setIsLoading(true);
     try {
@@ -164,22 +157,18 @@ export default function SearchPage() {
         end_date: date?.to ? format(date.to, "yyyy-MM-dd") : undefined,
       };
 
-      // Call the backend /search endpoint
       const response = await api.get("/search", { params });
       setResults(response.data.results || []);
       setTotalResults(response.data.total || 0);
     } catch (error: any) {
-      // --- 3. THIS IS THE FIX ---
       if (error.response && error.response.status === 401) {
-        // 401 error! Our cookie is invalid or expired.
         toast({
           variant: "destructive",
           title: "Session Expired",
           description: "Please log in again.",
         });
-        auth.logout(); // This will clear localStorage and redirect to /login
+        auth.logout();
       } else {
-        // Other error (e.g., server is down)
         console.error("Failed to fetch search results:", error);
         toast({
           variant: "destructive",
@@ -191,10 +180,8 @@ export default function SearchPage() {
     setIsLoading(false);
   };
 
-  // Fetch file details (for modal)
   const fetchFileDetails = async (fileId: string) => {
     try {
-      // Call backend /archive/<file_id> endpoint
       const response = await api.get(`/archive/${fileId}`);
       setFileDetails(response.data);
     } catch (error) {
@@ -204,20 +191,19 @@ export default function SearchPage() {
         title: "Error",
         description: "Could not load file details.",
       });
-      setSelectedFile(null); // Close modal on error
+      setSelectedFile(null);
     }
   };
 
-  // Download file (from modal)
+  // --- UPDATED: Download function ---
   const handleDownload = async () => {
     if (!fileDetails) return;
     setIsDownloading(true);
     try {
-      // The backend already gave us the pre-signed download_url
-      // We just need to trigger the download in the browser.
       const link = document.createElement("a");
       link.href = fileDetails.download_url;
-      link.setAttribute("download", fileDetails.filename); // Set filename
+      // --- FIX: Use original_filename for the download ---
+      link.setAttribute("download", fileDetails.original_filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -232,26 +218,24 @@ export default function SearchPage() {
     setIsDownloading(false);
   };
 
-  // Run a search on initial page load
   useEffect(() => {
     handleSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // We only want this to run once on load
+  }, []);
 
-  // Handle opening the details modal
   useEffect(() => {
     if (selectedFile) {
       fetchFileDetails(selectedFile.file_id);
     } else {
-      setFileDetails(null); // Clear details when modal closes
+      setFileDetails(null);
     }
   }, [selectedFile]);
 
-  // --- 5. JSX ---
+  // --- 5. JSX (With updates) ---
 
   return (
     <div className="flex flex-col gap-8">
-      {/* 1. Page Title */}
+      {/* 1. Page Title (Unchanged) */}
       <div>
         <h1 className="text-4xl font-bold">Search & Retrieve</h1>
         <p className="text-lg text-muted-foreground">
@@ -259,21 +243,18 @@ export default function SearchPage() {
         </p>
       </div>
 
-      {/* 2. Search Filters */}
+      {/* 2. Search Filters (Unchanged) */}
       <div className="flex flex-col md:flex-row gap-4">
-        {/* Text Search */}
         <Input
           placeholder="Search by filename..."
           className="h-11 flex-1"
           {...form.register("query")}
         />
-        {/* Tags Search */}
         <Input
           placeholder="Search by tag (e.g., finance,q4)"
           className="h-11 flex-1"
           {...form.register("tags")}
         />
-        {/* Date Range Picker */}
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -309,7 +290,6 @@ export default function SearchPage() {
             />
           </PopoverContent>
         </Popover>
-        {/* Search Button */}
         <Button
           className="h-11 px-6"
           onClick={handleSearch}
@@ -320,7 +300,7 @@ export default function SearchPage() {
         </Button>
       </div>
 
-      {/* 3. Search Results Table */}
+      {/* 3. Search Results Table (UPDATED) */}
       <Card>
         <CardHeader>
           <CardTitle>Search Results ({totalResults})</CardTitle>
@@ -350,8 +330,9 @@ export default function SearchPage() {
                     onClick={() => setSelectedFile(file)}
                     className="cursor-pointer"
                   >
+                    {/* --- FIX: Use original_filename --- */}
                     <TableCell className="font-medium">
-                      {file.filename}
+                      {file.original_filename}
                     </TableCell>
                     <TableCell>{formatDate(file.archived_at)}</TableCell>
                     <TableCell>{formatBytes(file.size)}</TableCell>
@@ -393,7 +374,7 @@ export default function SearchPage() {
         </CardFooter>
       </Card>
 
-      {/* 4. File Details Modal */}
+      {/* 4. File Details Modal (UPDATED) */}
       <Dialog
         open={!!selectedFile}
         onOpenChange={(isOpen) => !isOpen && setSelectedFile(null)}
@@ -414,7 +395,10 @@ export default function SearchPage() {
                 <span className="text-right font-medium text-muted-foreground">
                   Filename
                 </span>
-                <span className="col-span-2">{fileDetails.filename}</span>
+                {/* --- FIX: Use original_filename --- */}
+                <span className="col-span-2">
+                  {fileDetails.original_filename}
+                </span>
               </div>
               <div className="grid grid-cols-3 items-center gap-4">
                 <span className="text-right font-medium text-muted-foreground">
@@ -428,7 +412,10 @@ export default function SearchPage() {
                 <span className="text-right font-medium text-muted-foreground">
                   Content Type
                 </span>
-                <span className="col-span-2">{fileDetails.content_type}</span>
+                {/* --- FIX: Use original_content_type --- */}
+                <span className="col-span-2">
+                  {fileDetails.original_content_type}
+                </span>
               </div>
               <div className="grid grid-cols-3 items-center gap-4">
                 <span className="text-right font-medium text-muted-foreground">

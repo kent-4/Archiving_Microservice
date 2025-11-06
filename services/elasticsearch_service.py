@@ -23,12 +23,15 @@ def create_index_if_not_exists():
                         "s3_url": {"type": "keyword"},
                         "archived_at": {"type": "date"},
                         "status": {"type": "keyword"},
-                        
-                        # --- NEW FIELDS ---
-                        "tags": {"type": "keyword"}, # For discrete tag filtering
+                        "tags": {"type": "keyword"},
                         "archive_policy": {"type": "keyword"},
-                        "size": {"type": "long"}, # For storing file size in bytes
-                        "owner_id": {"type": "keyword"} # To link files to a user
+                        "size": {"type": "long"},
+                        "owner_id": {"type": "keyword"},
+                        
+                        # --- FIELDS ADDED FOR ZIPPING ---
+                        "original_filename": {"type": "text", "analyzer": "standard"},
+                        "original_content_type": {"type": "keyword"},
+                        "was_compressed": {"type": "boolean"} # <-- NEW
                         # --- END NEW FIELDS ---
                     }
                 }

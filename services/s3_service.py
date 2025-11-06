@@ -12,7 +12,8 @@ s3_client = boto3.client(
 
 def upload_to_s3(file_obj, filename):
     """
-    Uploads a file object to the configured S3 bucket.
+    Uploads a file object (for small files) to the configured S3 bucket.
+    This is a streaming upload, not multipart.
     """
     if not S3_BUCKET_NAME:
         raise ValueError("S3_BUCKET_NAME is not configured.")
@@ -25,13 +26,10 @@ def upload_to_s3(file_obj, filename):
         )
         s3_url = f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{filename}"
         return s3_url
-    # --- IMPROVED ERROR HANDLING ---
     except NoCredentialsError:
         print("!!! S3 Critical Error: Credentials not available.")
-        # Re-raising as a more generic error for the API layer to handle
         raise ValueError("Server is not configured with valid S3 credentials.")
     except ClientError as e:
-        # This catches specific AWS-related errors like "Access Denied" or "NoSuchBucket"
         error_code = e.response['Error']['Code']
         print(f"!!! S3 Client Error ({error_code}): {e.response['Error']['Message']}")
         raise ValueError(f"An S3 error occurred: {error_code}")
@@ -39,7 +37,7 @@ def upload_to_s3(file_obj, filename):
 
 def create_presigned_url(object_name, expiration=3600):
     """
-    Generate a presigned URL to share an S3 object.
+    Generate a presigned URL to download an S3 object.
     """
     if not S3_BUCKET_NAME:
         raise ValueError("S3_BUCKET_NAME is not configured.")
@@ -53,3 +51,84 @@ def create_presigned_url(object_name, expiration=3600):
     except ClientError as e:
         print(f"!!! S3 Client Error generating presigned URL: {e}")
         return None
+
+# --- NEW FUNCTIONS FOR MULTIPART UPLOAD ---
+
+def create_multipart_upload(filename):
+    """
+    Initiates a multipart upload with S3 and returns an UploadId.
+    """
+    if not S3_BUCKET_NAME:
+        raise ValueError("S3_BUCKET_NAME is not configured.")
+    
+    try:
+        response = s3_client.create_multipart_upload(
+            Bucket=S3_BUCKET_NAME,
+            Key=filename
+        )
+        return response['UploadId']
+    except ClientError as e:
+        print(f"!!! S3 Client Error creating multipart upload: {e}")
+        raise ValueError(f"Could not initiate multipart upload: {e}")
+
+def generate_presigned_part_url(upload_id, filename, part_number, expiration=3600):
+    """
+    Generates a presigned URL for a single part of a multipart upload.
+    """
+    if not S3_BUCKET_NAME:
+        raise ValueError("S3_BUCKET_NAME is not configured.")
+        
+    try:
+        response = s3_client.generate_presigned_url(
+            'upload_part',
+            Params={
+                'Bucket': S3_BUCKET_NAME,
+                'Key': filename,
+                'UploadId': upload_id,
+                'PartNumber': part_number
+            },
+            ExpiresIn=expiration
+        )
+        return response
+    except ClientError as e:
+        print(f"!!! S3 Client Error generating part URL: {e}")
+        return None
+
+def complete_multipart_upload(upload_id, filename, parts):
+    """
+    Finalizes a multipart upload by assembling the uploaded parts.
+    'parts' must be a list of dicts: [{'ETag': '...', 'PartNumber': ...}]
+    """
+    if not S3_BUCKET_NAME:
+        raise ValueError("S3_BUCKET_NAME is not configured.")
+        
+    try:
+        response = s3_client.complete_multipart_upload(
+            Bucket=S3_BUCKET_NAME,
+            Key=filename,
+            UploadId=upload_id,
+            MultipartUpload={'Parts': parts}
+        )
+        # Returns the full S3 URL
+        return response['Location']
+    except ClientError as e:
+        print(f"!!! S3 Client Error completing upload: {e}")
+        raise ValueError(f"Could not complete multipart upload: {e}")
+
+def abort_multipart_upload(upload_id, filename):
+    """
+    Aborts an in-progress multipart upload to clean up.
+    """
+    if not S3_BUCKET_NAME:
+        raise ValueError("S3_BUCKET_NAME is not configured.")
+    
+    try:
+        s3_client.abort_multipart_upload(
+            Bucket=S3_BUCKET_NAME,
+            Key=filename,
+            UploadId=upload_id
+        )
+        print(f"Aborted upload {upload_id} for {filename}")
+    except ClientError as e:
+        print(f"!!! S3 Client Error aborting upload: {e}")
+        # Don't raise here, as this is a cleanup function

@@ -35,6 +35,7 @@ app = Flask(__name__)
 origins = [
     "http://localhost:3000", # For dev
     "http://localhost:3001", # For your dev
+    "http://127.0.0.1:3000",
     # "https://your-production-domain.com" # For production
 ]
 CORS(app, supports_credentials=True, origins=origins)

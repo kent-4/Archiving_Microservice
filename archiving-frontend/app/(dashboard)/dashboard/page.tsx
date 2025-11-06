@@ -17,11 +17,12 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Clock, FileText, HardDrive, Package } from "lucide-react";
+import { ArrowRight, Clock, HardDrive, Package } from "lucide-react";
 import api from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
+import { useAuth } from "@/hooks/useAuth"; // <-- 1. IMPORT useAuth
 
-// Define interfaces for our data
+// (Interfaces and helper functions remain the same)
 interface DashboardStats {
   totalItems: number;
   storageUsed: number; // in bytes
@@ -31,13 +32,13 @@ interface DashboardStats {
 interface ArchivedFile {
   file_id: string;
   filename: string;
+  original_filename: string; // <-- Make sure this is here from our last step
   archived_at: string;
   size: number; // in bytes
   tags: string[];
   status: string;
 }
 
-// Helper function to format bytes
 function formatBytes(bytes: number, decimals = 2) {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
@@ -47,7 +48,6 @@ function formatBytes(bytes: number, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-// Helper function to format date
 function formatDate(dateString: string) {
   return new Date(dateString).toLocaleDateString("en-US", {
     year: "numeric",
@@ -56,7 +56,6 @@ function formatDate(dateString: string) {
   });
 }
 
-// Helper for 'Last Upload'
 function formatTimeAgo(dateString: string | null): string {
   if (!dateString) return "N/A";
   const date = new Date(dateString);
@@ -77,6 +76,7 @@ export default function DashboardPage() {
   const [recentFiles, setRecentFiles] = useState<ArchivedFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+  const auth = useAuth(); // <-- 2. GET THE AUTH CONTEXT
 
   useEffect(() => {
     async function fetchData() {
@@ -90,20 +90,33 @@ export default function DashboardPage() {
 
         setStats(statsRes.data);
         setRecentFiles(recentRes.data.results);
-      } catch (error) {
-        console.error("Failed to fetch dashboard data:", error);
-        toast({
-          variant: "destructive",
-          title: "Failed to load dashboard",
-          description: "Could not fetch dashboard statistics and recent files.",
-        });
+      } catch (error: any) {
+        // --- 3. ADD THIS UPDATED CATCH BLOCK ---
+        if (error.response && error.response.status === 401) {
+          // 401 error! Our cookie is invalid or expired.
+          toast({
+            variant: "destructive",
+            title: "Session Expired",
+            description: "Please log in again.",
+          });
+          auth.logout(); // This will clear localStorage and redirect to /login
+        } else {
+          // Other error (e.g., server is down)
+          console.error("Failed to fetch dashboard data:", error);
+          toast({
+            variant: "destructive",
+            title: "Failed to load dashboard",
+            description: "Could not fetch dashboard statistics and recent files.",
+          });
+        }
+        // --- END UPDATED CATCH BLOCK ---
       }
       setIsLoading(false);
     }
     fetchData();
-  }, [toast]);
+  }, [toast, auth]); // <-- 4. ADD auth TO DEPENDENCY ARRAY
 
-  // Status Badge Component
+  // ... (StatusBadge component is unchanged) ...
   const StatusBadge = ({ status }: { status: string }) => {
     let variant: "default" | "secondary" | "destructive" = "secondary";
     if (status === "archived") variant = "default";
@@ -135,7 +148,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      {/* 1. Page Title */}
+      {/* 1. Page Title (Unchanged) */}
       <div>
         <h1 className="text-4xl font-bold">Dashboard</h1>
         <p className="text-lg text-muted-foreground">
@@ -143,7 +156,7 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* 2. Stats Cards */}
+      {/* 2. Stats Cards (Unchanged) */}
       <div className="grid gap-6 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -182,7 +195,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* 3. Recent Archives Table */}
+      {/* 3. Recent Archives Table (Unchanged) */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Recent Archives</CardTitle>
@@ -206,7 +219,7 @@ export default function DashboardPage() {
                 recentFiles.map((file) => (
                   <TableRow key={file.file_id}>
                     <TableCell className="font-medium">
-                      {file.filename}
+                      {file.original_filename}
                     </TableCell>
                     <TableCell>{formatDate(file.archived_at)}</TableCell>
                     <TableCell>{formatBytes(file.size)}</TableCell>
