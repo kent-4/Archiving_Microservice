@@ -117,83 +117,101 @@ export default function UploadPage() {
 
   // --- 5. Handler for LARGE files (NEW multipart logic) ---
   async function handleLargeFileUpload(values: FormSchema) {
-    const file = values.file;
-    let uploadId = "";
+  const file = values.file;
+  let uploadId = "";
 
-    try {
-      // Step 1: Start the multipart upload
-      const startRes = await api.post("/archive/start-upload", {
-        filename: file.name,
-      });
-      uploadId = startRes.data.uploadId;
+  try {
+    // Step 1: Start the multipart upload
+    const startRes = await api.post("/archive/start-upload", {
+      filename: file.name,
+    });
+    uploadId = startRes.data.uploadId;
 
-      const totalParts = Math.ceil(file.size / MULTIPART_CHUNK_SIZE);
-      const partUploadPromises = [];
-      const uploadedParts: UploadedPart[] = [];
+    const totalParts = Math.ceil(file.size / MULTIPART_CHUNK_SIZE);
+    const partUploadPromises = [];
+    const uploadedParts: UploadedPart[] = [];
+    
+    // 💡 FIX 3 (Progress Bar): Array to track loaded bytes for each part
+    const partProgress: number[] = new Array(totalParts).fill(0);
+    
+    // 💡 Helper function to update overall progress
+    const updateOverallProgress = (partIndex: number, loaded: number) => {
+      partProgress[partIndex] = loaded;
+      const totalUploadedBytes = partProgress.reduce((sum, bytes) => sum + bytes, 0);
+      const newProgress = Math.round((totalUploadedBytes / file.size) * 100);
+      setUploadProgress(newProgress);
+    };
 
-      // Step 2 & 3: Chunk file and get pre-signed URLs
-      for (let i = 0; i < totalParts; i++) {
-        const partNumber = i + 1;
-        const start = i * MULTIPART_CHUNK_SIZE;
-        const end = (i + 1) * MULTIPART_CHUNK_SIZE;
-        const chunk = file.slice(start, end);
+    // Step 2 & 3: Chunk file and get pre-signed URLs
+    for (let i = 0; i < totalParts; i++) {
+      const partNumber = i + 1;
+      const start = i * MULTIPART_CHUNK_SIZE;
+      const end = (i + 1) * MULTIPART_CHUNK_SIZE;
+      const chunk = file.slice(start, end);
 
-        // Get the pre-signed URL for this part
-        const partUrlRes = await api.post("/archive/get-upload-part-url", {
-          filename: file.name,
-          uploadId: uploadId,
-          partNumber: partNumber,
-        });
-        const presignedUrl = partUrlRes.data.url;
-
-        // Step 4: Upload chunk directly to S3 (use standard axios, not 'api')
-        const uploadPromise = axios
-          .put(presignedUrl, chunk, {
-            headers: { "Content-Type": file.type },
-          })
-          .then((uploadRes) => {
-            // Store the ETag (receipt) from S3
-            const etag = uploadRes.headers["etag"];
-            uploadedParts.push({ ETag: etag, PartNumber: partNumber });
-
-            // Update progress
-            setUploadProgress(Math.round((partNumber / totalParts) * 100));
-          });
-        partUploadPromises.push(uploadPromise);
-      }
-
-      // Wait for all parts to finish uploading
-      await Promise.all(partUploadPromises);
-
-      // Step 5: Complete the upload
-      await api.post("/archive/complete-upload", {
+      // Get the pre-signed URL for this part
+      const partUrlRes = await api.post("/archive/get-upload-part-url", {
         filename: file.name,
         uploadId: uploadId,
-        parts: uploadedParts,
-        tags: values.tags || "",
-        policy: values.policy,
-        fileSize: file.size,
-        contentType: file.type,
+        partNumber: partNumber,
       });
+      const presignedUrl = partUrlRes.data.url;
 
-      toast({
-        title: "Upload Successful",
-        description: `File "${values.file.name}" has been archived.`,
-      });
-      form.reset();
-      form.setValue("policy", "standard-7");
-    } catch (error: any) {
-      // TODO: Implement abort logic if upload fails midway
-      console.error("Large file upload failed:", error);
-      const errorMessage =
-        error.response?.data?.error || "An unknown error occurred.";
-      toast({
-        variant: "destructive",
-        title: "Upload Failed",
-        description: errorMessage,
-      });
+      // Step 4: Upload chunk directly to S3 (use standard axios, not 'api')
+      const uploadPromise = axios
+        .put(presignedUrl, chunk, {
+          // 💡 FIX 1 (403 Error): Explicitly set withCredentials to false
+          headers: { "Content-Type": file.type },
+          withCredentials: false, 
+          // 💡 FIX 3 (Progress Bar): Add real-time progress handler
+          onUploadProgress: (progressEvent) => {
+            const loaded = progressEvent.loaded || 0;
+            updateOverallProgress(i, loaded);
+          },
+        })
+        .then((uploadRes) => {
+          // 💡 FIX 2 (ETag Format): Store the ETag (receipt) and strip quotes
+          const etag = uploadRes.headers["etag"].replace(/"/g, "");
+          uploadedParts.push({ ETag: etag, PartNumber: partNumber });
+        });
+      partUploadPromises.push(uploadPromise);
     }
+
+    // Wait for all parts to finish uploading
+    await Promise.all(partUploadPromises);
+
+    // Ensure progress is 100% before next step
+    setUploadProgress(100);
+
+    // Step 5: Complete the upload
+    await api.post("/archive/complete-upload", {
+      filename: file.name,
+      uploadId: uploadId,
+      parts: uploadedParts,
+      tags: values.tags || "",
+      policy: values.policy,
+      fileSize: file.size,
+      contentType: file.type,
+    });
+
+    toast({
+      title: "Upload Successful",
+      description: `File "${values.file.name}" has been archived.`,
+    });
+    form.reset();
+    form.setValue("policy", "standard-7");
+  } catch (error: any) {
+    // TODO: Implement abort logic if upload fails midway
+    console.error("Large file upload failed:", error);
+    const errorMessage =
+      error.response?.data?.error || "An unknown error occurred.";
+    toast({
+      variant: "destructive",
+      title: "Upload Failed",
+      description: errorMessage,
+    });
   }
+}
 
   // --- File Input Handlers (Unchanged) ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
