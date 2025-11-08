@@ -194,12 +194,14 @@ def start_upload():
 def get_upload_part_url():
     try:
         data = request.get_json()
-        filename = data.get('filename')
-        upload_id = data.get('uploadId')
-        part_number = data.get('partNumber')
+        filename = data.get('filename', None)
+        upload_id = data.get('uploadId', None)
+        part_number_str = data.get('partNumber', None)
         
-        if not all([filename, upload_id, part_number]):
+        if not all([filename, upload_id, part_number_str]):
             return jsonify({"error": "filename, uploadId, and partNumber are required."}), 400
+        
+        part_number = int(part_number_str) # Convert to integer
             
         presigned_url = s3_service.generate_presigned_part_url(upload_id, filename, part_number)
         
@@ -208,6 +210,10 @@ def get_upload_part_url():
         else:
             return jsonify({"error": "Could not generate presigned URL."}), 500
             
+    except ValueError as ve:
+        # This will now also catch the int() conversion error if partNumber is not a valid integer
+        app.logger.error(f"Invalid parameter or configuration error in get_upload_part_url: {ve}")
+        return jsonify({"error": "Invalid parameter or server configuration issue."}), 400
     except Exception as e:
         app.logger.error(f"Error getting part URL: {e}")
         return jsonify({"error": "Could not get part URL."}), 500
@@ -284,7 +290,7 @@ def handle_search():
     
     # --- NEW: Get advanced filter params ---
     tags_str = request.args.get('tags', '')
-    tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] or None
+    tags = [tag.strip().lower() for tag in tags_str.split(',') if tag.strip()] or None
     start_date = request.args.get('start_date') # Expects ISO format (YYYY-MM-DD)
     end_date = request.args.get('end_date')
     # --- END NEW ---

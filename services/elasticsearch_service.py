@@ -23,7 +23,14 @@ def create_index_if_not_exists():
                         "s3_url": {"type": "keyword"},
                         "archived_at": {"type": "date"},
                         "status": {"type": "keyword"},
-                        "tags": {"type": "keyword"},
+                        "tags": {
+                            "type": "text",
+                            "fields": {
+                                "keyword": {
+                                    "type": "keyword"
+                                }
+                            }
+                        },
                         "archive_policy": {"type": "keyword"},
                         "size": {"type": "long"},
                         "owner_id": {"type": "keyword"},
@@ -56,36 +63,31 @@ def index_document(document):
         print(f"✅ Indexed document {document.get('file_id')} in Elasticsearch")
         return response
     except Exception as e:
-        print(f"❌ Error indexing document in Elasticsearch: {e}")
+        print(f"❌ Error indexing document in Elasticsearch: {e}", flush=True)
         raise
 
 def search_documents(user_id, query_string, tags=None, start_date=None, end_date=None, size=10):
     """Search documents in Elasticsearch with advanced filtering"""
     try:
-        # Base query: must match user_id
-        must_queries = [
-            {"term": {"owner_id": user_id}}
-        ]
-
-        # Add full-text search if query_string is provided
+        must_queries = []
         if query_string:
             must_queries.append(
                 {"multi_match": {
                     "query": query_string,
-                    "fields": ["filename", "content_type", "tags"], # Added 'tags' to search
+                    "fields": ["filename", "original_filename", "tags"],
                     "fuzziness": "AUTO"
                 }}
             )
+        else:
+            must_queries.append({"match_all": {}})
+
+        filters = [
+            {"term": {"owner_id": user_id}}
+        ]
         
-        # Build filter context
-        filters = []
-        
-        # Add tags filter
         if tags:
-            # Assuming 'tags' is a list of strings
-            filters.append({"terms": {"tags": tags}})
+            filters.append({"terms": {"tags.keyword": tags}})
             
-        # Add date range filter
         date_range = {}
         if start_date:
             date_range["gte"] = start_date
@@ -103,7 +105,7 @@ def search_documents(user_id, query_string, tags=None, start_date=None, end_date
             },
             "size": size,
             "sort": [
-                {"archived_at": {"order": "desc"}} # Sort by most recent
+                {"archived_at": {"order": "desc"}}
             ]
         }
         

@@ -19,6 +19,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
+import axios from "axios";
 
 // ShadCN Components
 import { Button } from "@/components/ui/button";
@@ -160,8 +161,8 @@ export default function SearchPage() {
       const response = await api.get("/search", { params });
       setResults(response.data.results || []);
       setTotalResults(response.data.total || 0);
-    } catch (error: any) {
-      if (error.response && error.response.status === 401) {
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
         toast({
           variant: "destructive",
           title: "Session Expired",

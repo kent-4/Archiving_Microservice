@@ -21,6 +21,7 @@ import { ArrowRight, Clock, HardDrive, Package } from "lucide-react";
 import api from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from "@/hooks/useAuth"; // <-- 1. IMPORT useAuth
+import axios from "axios";
 
 // (Interfaces and helper functions remain the same)
 interface DashboardStats {
@@ -90,9 +91,8 @@ export default function DashboardPage() {
 
         setStats(statsRes.data);
         setRecentFiles(recentRes.data.results);
-      } catch (error: any) {
-        // --- 3. ADD THIS UPDATED CATCH BLOCK ---
-        if (error.response && error.response.status === 401) {
+      } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 401) {
           // 401 error! Our cookie is invalid or expired.
           toast({
             variant: "destructive",
@@ -109,7 +109,6 @@ export default function DashboardPage() {
             description: "Could not fetch dashboard statistics and recent files.",
           });
         }
-        // --- END UPDATED CATCH BLOCK ---
       }
       setIsLoading(false);
     }

@@ -135,13 +135,10 @@ def _create_metadata(user_id, file_id_str, s3_url, final_filename, original_file
         "archived_at": datetime.now(timezone.utc).isoformat(),
         "status": "archived",
         "owner_id": user_id,
-        "tags": tags or [],
+        "tags": [tag.lower() for tag in tags] if tags else [],
         "archive_policy": archive_policy or "standard",
         "size": file_size
     }
-    
-    # Save to MongoDB
-    save_metadata(metadata)
     
     # Index in Elasticsearch
     _index_to_elasticsearch(file_id_str, metadata)
@@ -155,9 +152,13 @@ def _index_to_elasticsearch(file_id, metadata):
     """Internal function to index a document and handle errors."""
     try:
         metadata_for_es = metadata.copy()
+        # Remove MongoDB's _id before sending to Elasticsearch
+        if "_id" in metadata_for_es:
+            del metadata_for_es["_id"]
+            
         elasticsearch_service.index_document(document=metadata_for_es)
     except Exception as e:
-        print(f"Warning: Failed to index metadata for file_id {file_id}. Adding to retry queue. Error: {e}")
+        print(f"Warning: Failed to index metadata for file_id {file_id}. Adding to retry queue. Error: {e}", flush=True)
         try:
             failed_index_collection = get_failed_index_collection()
             failed_index_collection.insert_one({
@@ -166,7 +167,7 @@ def _index_to_elasticsearch(file_id, metadata):
                 "timestamp": datetime.now(timezone.utc)
             })
         except Exception as db_error:
-            print(f"Error: Could not save failed index to MongoDB: {db_error}")
+            print(f"Error: Could not save failed index to MongoDB: {db_error}", flush=True)
 
 def get_archived_file(file_id, user_id):
     """

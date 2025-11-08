@@ -28,6 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast"; // For showing errors
 import { useAuth } from "@/hooks/useAuth"; // Our auth context
 import api from "@/lib/api";
+import axios from "axios";
 
 // 1. Define the form validation schema
 const formSchema = z.object({
@@ -74,10 +75,13 @@ export default function LoginPage() {
         title: "Login Successful",
         description: `Welcome back, ${user.email}!`,
       });
-    } catch (error: any) {
-      // ... (error handling is the same)
-      const errorMessage =
-        error.response?.data?.error || "An unknown error occurred.";
+    } catch (error) {
+      let errorMessage = "An unknown error occurred.";
+      if (axios.isAxiosError(error) && error.response) {
+        errorMessage = error.response.data?.error || error.message;
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
       toast({
         variant: "destructive",
         title: "Login Failed",
