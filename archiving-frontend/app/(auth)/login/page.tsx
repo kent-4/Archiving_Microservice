@@ -175,12 +175,10 @@ export default function LoginPage() {
             </Button>
           </form>
         </Form>
-        <div className="mt-6 flex justify-between text-sm text-muted-foreground">
-          <Link href="#" className="hover:text-primary">
-            Privacy Policy
-          </Link>
-          <Link href="#" className="hover:text-primary">
-            Terms of Service
+        <div className="mt-6 text-center text-sm">
+          <span className="text-muted-foreground">Don&apos;t have an account? </span>
+          <Link href="/register" className="text-primary hover:underline">
+            Sign Up
           </Link>
         </div>
       </CardContent>
