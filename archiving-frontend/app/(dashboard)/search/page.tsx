@@ -14,7 +14,6 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
-  X,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import api from "@/lib/api";
@@ -54,6 +53,13 @@ import {
   CardContent,
   CardFooter,
 } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // --- 1. Define Types (UPDATED) ---
 
@@ -135,6 +141,8 @@ export default function SearchPage() {
   const [totalResults, setTotalResults] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [date, setDate] = useState<DateRange | undefined>(undefined);
+  const [sortBy, setSortBy] = useState("archived_at");
+  const [sortOrder, setSortOrder] = useState("desc");
   
   const form = useForm<SearchSchema>({
     resolver: zodResolver(searchSchema),
@@ -145,6 +153,7 @@ export default function SearchPage() {
   const [selectedFile, setSelectedFile] = useState<ArchivedFile | null>(null);
   const [fileDetails, setFileDetails] = useState<FileDetails | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
 
   // --- 4. Data Fetching (Unchanged, but auth fix is still here) ---
 
@@ -156,6 +165,8 @@ export default function SearchPage() {
         tags: tags || undefined,
         start_date: date?.from ? format(date.from, "yyyy-MM-dd") : undefined,
         end_date: date?.to ? format(date.to, "yyyy-MM-dd") : undefined,
+        sort_by: sortBy,
+        sort_order: sortOrder,
       };
 
       const response = await api.get("/search", { params });
@@ -196,6 +207,29 @@ export default function SearchPage() {
     }
   };
 
+  const handleDirectDownload = async (fileId: string, originalFilename: string) => {
+    setDownloadingFileId(fileId);
+    try {
+      const response = await api.get(`/api/download/${fileId}`);
+      const { download_url } = response.data;
+
+      const link = document.createElement("a");
+      link.href = download_url;
+      link.setAttribute("download", originalFilename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Download failed:", error);
+      toast({
+        variant: "destructive",
+        title: "Download Failed",
+        description: "Could not download the file.",
+      });
+    }
+    setDownloadingFileId(null);
+  };
+
   // --- UPDATED: Download function ---
   const handleDownload = async () => {
     if (!fileDetails) return;
@@ -230,7 +264,7 @@ export default function SearchPage() {
     } else {
       setFileDetails(null);
     }
-  }, [selectedFile]);
+  }, [selectedFile, fetchFileDetails]);
 
   // --- 5. JSX (With updates) ---
 
@@ -291,6 +325,25 @@ export default function SearchPage() {
             />
           </PopoverContent>
         </Popover>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="h-11 w-full md:w-[180px]">
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="archived_at">Date Archived</SelectItem>
+            <SelectItem value="filename">Filename</SelectItem>
+            <SelectItem value="size">Size</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortOrder} onValueChange={setSortOrder}>
+          <SelectTrigger className="h-11 w-full md:w-[120px]">
+            <SelectValue placeholder="Order" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="desc">Descending</SelectItem>
+            <SelectItem value="asc">Ascending</SelectItem>
+          </SelectContent>
+        </Select>
         <Button
           className="h-11 px-6"
           onClick={handleSearch}
@@ -315,12 +368,13 @@ export default function SearchPage() {
                 <TableHead>Size</TableHead>
                 <TableHead>Tags</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center">
+                  <TableCell colSpan={6} className="h-24 text-center">
                     Loading results...
                   </TableCell>
                 </TableRow>
@@ -328,31 +382,46 @@ export default function SearchPage() {
                 results.map((file) => (
                   <TableRow
                     key={file.file_id}
-                    onClick={() => setSelectedFile(file)}
                     className="cursor-pointer"
                   >
-                    {/* --- FIX: Use original_filename --- */}
-                    <TableCell className="font-medium">
+                    <TableCell className="font-medium" onClick={() => setSelectedFile(file)}>
                       {file.original_filename}
                     </TableCell>
-                    <TableCell>{formatDate(file.archived_at)}</TableCell>
-                    <TableCell>{formatBytes(file.size)}</TableCell>
-                    <TableCell className="flex gap-1 flex-wrap">
+                    <TableCell onClick={() => setSelectedFile(file)}>{formatDate(file.archived_at)}</TableCell>
+                    <TableCell onClick={() => setSelectedFile(file)}>{formatBytes(file.size)}</TableCell>
+                    <TableCell className="flex gap-1 flex-wrap" onClick={() => setSelectedFile(file)}>
                       {file.tags.map((tag) => (
                         <Badge key={tag} variant="secondary">
                           #{tag}
                         </Badge>
                       ))}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={() => setSelectedFile(file)}>
                       <StatusBadge status={file.status} />
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDirectDownload(file.file_id, file.original_filename);
+                        }}
+                        disabled={downloadingFileId === file.file_id}
+                      >
+                        {downloadingFileId === file.file_id ? (
+                          <Download className="h-4 w-4 animate-pulse" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={6}
                     className="h-24 text-center text-muted-foreground"
                   >
                     No results found. Try adjusting your filters.
