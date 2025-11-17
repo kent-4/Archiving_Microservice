@@ -26,18 +26,20 @@ import {
 import api from "@/lib/api";
 import axios from "axios"; // <-- NEW: Import standard axios for S3 uploads
 import { cn } from "@/lib/utils";
-
+import JSZip from "jszip"; // <-- ADD THIS
+import { Folder } from "lucide-react"; // <-- ADD THIS
 // --- UPDATED: Define limits ---
 const SMALL_FILE_LIMIT = 25 * 1024 * 1024; // 25MB
 const MULTIPART_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 
 // 1. UPDATED schema: Remove the size limit. We now handle it in logic.
+// 1. UPDATED schema: Accept a FileList for folder uploads.
 const formSchema = z.object({
   tags: z.string().optional(),
   policy: z.string().min(1, "Please select an archive policy."),
-  file: z
-    .instanceof(File)
-    .refine((file) => file.size > 0, "Please select a file to upload."),
+  files: z // <-- Rename 'file' to 'files'
+    .instanceof(FileList)
+    .refine((files) => files.length > 0, "Please select a file or folder."),
 });
 
 type FormSchema = z.infer<typeof formSchema>;
@@ -55,75 +57,154 @@ export default function UploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
 
   // 2. Define the form
+  // 2. Define the form
   const form = useForm<FormSchema>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       tags: "",
       policy: "standard-7",
+      files: undefined, // <-- Use 'files'
     },
   });
 
-  const selectedFile = form.watch("file");
+  const selectedFiles = form.watch("files"); // <-- Rename to 'selectedFiles'
 
   // 3. Define the submit handler
+  // 3. Define the submit handler (UPDATED FOR CLIENT-SIDE ZIPPING)
   async function onSubmit(values: FormSchema) {
     setIsUploading(true);
-    setUploadProgress(0);
+    setUploadProgress(0); // We'll use this for zipping progress
 
-    // --- NEW: Logic to decide which upload flow to use ---
-    if (values.file.size <= SMALL_FILE_LIMIT) {
-      // Use the "small file" flow (with in-memory zipping on backend)
-      await handleSmallFileUpload(values);
-    } else {
-      // Use the "large file" multipart flow
-      await handleLargeFileUpload(values);
+    const { files, tags, policy } = values;
+
+    // --- 1. Create the Zip File in the Browser ---
+    const zip = new JSZip();
+    let folderName = "archive"; // Default name
+    
+    // Check if it's a folder upload by looking at the relative path
+    const isFolder = files[0].webkitRelativePath;
+    if (isFolder) {
+      folderName = files[0].webkitRelativePath.split('/')[0];
     }
-    // --- END NEW LOGIC ---
 
-    setIsUploading(false);
-    setUploadProgress(0);
-  }
+    toast({
+      title: "Processing Files",
+      description: `Zipping ${files.length} files... Please wait.`,
+    });
 
-  // --- 4. Handler for SMALL files (existing logic) ---
-  async function handleSmallFileUpload(values: FormSchema) {
-    const formData = new FormData();
-    formData.append("file", values.file);
-    formData.append("tags", values.tags || "");
-    formData.append("policy", values.policy);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      // Use webkitRelativePath to preserve folder structure, otherwise just use name
+      const path = file.webkitRelativePath || file.name;
+      zip.file(path, file);
+      
+      // Update progress bar based on zipping progress
+      setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+    }
 
+    // --- 2. Generate the Zip Blob ---
+    let zipBlob: Blob;
     try {
-      await api.post("/archive", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
+      zipBlob = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: {
+          level: 6, // A good balance of speed and compression
         },
       });
-
+    } catch (err) {
+      console.error("Failed to generate zip:", err);
       toast({
-        title: "Upload Successful",
-        description: `File "${values.file.name}" has been archived.`,
+        variant: "destructive",
+        title: "Zipping Failed",
+        description: "Could not create zip file on the client.",
       });
-      form.reset();
-      form.setValue("policy", "standard-7");
+      setIsUploading(false);
+      setUploadProgress(0);
+      return;
+    }
+    
+    // Create a File object from the Blob
+    const zipFile = new File([zipBlob], `${folderName}.zip`, {
+      type: "application/zip",
+    });
+
+    // --- 3. Upload the *Single Zip File* ---
+    setUploadProgress(0); // Reset progress for upload
+    let success = false;
+    let errorMessage = "An unknown error occurred.";
+
+    try {
+      if (zipFile.size <= SMALL_FILE_LIMIT) {
+        // Use small file handler for the zip
+        toast({ title: "Uploading Zip File...", description: `Total size: ${(zipFile.size / (1024*1024)).toFixed(2)} MB` });
+        await handleSmallFileUpload(zipFile, tags, policy);
+      } else {
+        // Use large file handler for the zip
+        // The large file handler will set its own progress
+        await handleLargeFileUpload(zipFile, tags, policy);
+      }
+      success = true;
+
     } catch (error) {
-      let errorMessage = "An unknown error occurred.";
       if (axios.isAxiosError(error) && error.response) {
         errorMessage = error.response.data?.error || error.message;
       } else if (error instanceof Error) {
         errorMessage = error.message;
       }
+    }
+
+    // --- 4. Show Final Status ---
+    if (success) {
+      toast({
+        title: "Upload Successful",
+        description: `Your upload "${zipFile.name}" has been archived.`,
+      });
+      // Reset form
+      form.reset();
+      form.setValue("policy", "standard-7");
+      const fileInput = document.getElementById("file-input") as HTMLInputElement;
+      if (fileInput) fileInput.value = "";
+    } else {
       toast({
         variant: "destructive",
         title: "Upload Failed",
         description: errorMessage,
       });
     }
+
+    setIsUploading(false);
+    setUploadProgress(0);
   }
 
-  // --- 5. Handler for LARGE files (NEW multipart logic) ---
-  async function handleLargeFileUpload(values: FormSchema) {
-    const file = values.file;
+  // --- 4. Handler for SMALL files (REFACTORED) ---
+  // This function now just uploads the single file it's given
+  async function handleSmallFileUpload(
+    file: File,
+    tags: string | undefined,
+    policy: string
+  ) {
+    const formData = new FormData();
+    formData.append("file", file); // <-- This will be the zip file
+    formData.append("tags", tags || "");
+    formData.append("policy", policy);
+
+    // Note: This returns a promise, which the onSubmit handler will await.
+    return api.post("/archive", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+  }
+
+  // --- 5. Handler for LARGE files (REFACTORED) ---
+  // This function now just uploads the single file it's given
+  async function handleLargeFileUpload(
+    file: File, // <-- This will be the zip file
+    tags: string | undefined,
+    policy: string
+  ) {
     let uploadId = "";
-    setUploadProgress(0);
 
     try {
       // Step 1: Start the multipart upload
@@ -149,24 +230,27 @@ export default function UploadPage() {
         });
         const presignedUrl = partUrlRes.data.url;
 
-        // Step 3: Upload the chunk directly to S3 using the native fetch API
+        // Step 3: Upload the chunk directly to S3
         const uploadResponse = await fetch(presignedUrl, {
-          method: 'PUT',
+          method: "PUT",
           body: chunk,
         });
 
         if (!uploadResponse.ok) {
-          // Attempt to get error details from S3's XML response
           const errorText = await uploadResponse.text();
           console.error("S3 Upload Error Response:", errorText);
-          throw new Error(`S3 upload failed for part ${partNumber} with status ${uploadResponse.status}`);
+          throw new Error(
+            `S3 upload failed for part ${partNumber} with status ${uploadResponse.status}`
+          );
         }
 
-        const etag = uploadResponse.headers.get('ETag')?.replace(/"/g, "");
+        const etag = uploadResponse.headers.get("ETag")?.replace(/"/g, "");
         if (!etag) {
-          throw new Error(`ETag not found in S3 response for part ${partNumber}`);
+          throw new Error(
+            `ETag not found in S3 response for part ${partNumber}`
+          );
         }
-        
+
         uploadedParts.push({ ETag: etag, PartNumber: partNumber });
         
         // Update progress
@@ -174,45 +258,29 @@ export default function UploadPage() {
       }
 
       // Step 4: Complete the upload
-      await api.post("/archive/complete-upload", {
+      // This returns a promise, which the onSubmit handler will await.
+      return api.post("/archive/complete-upload", {
         filename: file.name,
         uploadId: uploadId,
         parts: uploadedParts,
-        tags: values.tags || "",
-        policy: values.policy,
+        tags: tags || "",
+        policy: policy,
         fileSize: file.size,
-        contentType: file.type || 'application/octet-stream',
+        contentType: file.type || "application/octet-stream",
       });
-
-      toast({
-        title: "Upload Successful",
-        description: `File "${values.file.name}" has been archived.`,
-      });
-      form.reset();
-      form.setValue("policy", "standard-7");
-
     } catch (error) {
-      console.error("Large file upload failed:", error);
-      let errorMessage = "An unknown error occurred.";
-      if (error instanceof Error) {
-          errorMessage = error.message;
-      } else if (axios.isAxiosError(error) && error.response) {
-          errorMessage = error.response.data?.error || "An unknown error occurred during an API call.";
-      }
-      
-      toast({
-        variant: "destructive",
-        title: "Upload Failed",
-        description: errorMessage,
-      });
+      console.error(`Large file upload failed for ${file.name}:`, error);
+      // Re-throw the error so the onSubmit loop can catch it
+      throw error;
     }
   }
 
   // --- File Input Handlers (Unchanged) ---
+  // --- File Input Handlers (UPDATED) ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      form.setValue("file", file, { shouldValidate: true });
+    const fileList = e.target.files; // <-- Get the whole list
+    if (fileList && fileList.length > 0) {
+      form.setValue("files", fileList, { shouldValidate: true });
     }
   };
 
@@ -220,9 +288,9 @@ export default function UploadPage() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      form.setValue("file", file, { shouldValidate: true });
+    const fileList = e.dataTransfer.files; // <-- Get the whole list
+    if (fileList && fileList.length > 0) {
+      form.setValue("files", fileList, { shouldValidate: true });
     }
   };
 
@@ -245,41 +313,64 @@ export default function UploadPage() {
       {/* 2. Upload Form */}
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-          {/* --- File Dropzone (Unchanged) --- */}
+          {/* --- File Dropzone (THIS IS THE CORRECTED PART) --- */}
           <FormField
             control={form.control}
-            name="file"
+            name="files"
             render={() => (
               <FormItem>
                 <FormControl>
+                  {/* This is the div you pasted, now in the right place */}
                   <div
                     className={cn(
-                      "relative flex flex-col items-center justify-center w-full h-64 border-2 border-border border-dashed rounded-lg cursor-pointer bg-muted/20 transition-colors",
-                      dragActive && "border-primary bg-primary/10"
+                      "relative flex flex-col items-center justify-center w-full h-64 border-2 border-border border-dashed rounded-lg bg-muted/20 transition-colors",
+                      dragActive && "border-primary bg-primary/10",
+                      !isUploading && "cursor-pointer" // Keep pointer cursor
                     )}
                     onDragOver={(e) => handleDrag(e, true)}
                     onDragLeave={(e) => handleDrag(e, false)}
                     onDragEnd={(e) => handleDrag(e, false)}
                     onDrop={handleDrop}
-                    onClick={() =>
-                      document.getElementById("file-input")?.click()
-                    }
+                    // Main onClick is removed from here
                   >
+                    {/* Your two hidden inputs are correct */}
                     <input
                       id="file-input"
                       type="file"
                       className="hidden"
                       onChange={handleFileChange}
                       disabled={isUploading}
+                      multiple
                     />
-                    {selectedFile ? (
+                    <input
+                      id="folder-input"
+                      type="file"
+                      className="hidden"
+                      onChange={handleFileChange}
+                      disabled={isUploading}
+                      multiple
+                      webkitdirectory="true"
+                    />
+
+                    {selectedFiles && selectedFiles.length > 0 ? (
+                      // Your "Selected Files" UI is perfect
                       <div className="flex flex-col items-center text-center p-4">
-                        <FileIcon className="w-16 h-16 text-primary" />
+                        {selectedFiles[0].webkitRelativePath ? (
+                          <Folder className="w-16 h-16 text-primary" />
+                        ) : (
+                          <FileIcon className="w-16 h-16 text-primary" />
+                        )}
                         <span className="font-medium mt-4 text-lg">
-                          {selectedFile.name}
+                          {selectedFiles.length} file(s) selected
                         </span>
                         <span className="text-muted-foreground">
-                          {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
+                          {(
+                            Array.from(selectedFiles).reduce(
+                              (acc, file) => acc + file.size,
+                              0
+                            ) / (1024 * 1024)
+                          ).toFixed(2)}{" "}
+                          MB Total
                         </span>
                         <Button
                           type="button"
@@ -288,7 +379,13 @@ export default function UploadPage() {
                           className="absolute top-4 right-4 text-muted-foreground hover:text-destructive"
                           onClick={(e) => {
                             e.stopPropagation();
-                            form.setValue("file", new File([], ""), {
+                            // Reset both inputs
+                            const fileInput = document.getElementById("file-input") as HTMLInputElement;
+                            if (fileInput) fileInput.value = "";
+                            const folderInput = document.getElementById("folder-input") as HTMLInputElement;
+                            if (folderInput) folderInput.value = "";
+                            
+                            form.setValue("files", new DataTransfer().files, {
                               shouldValidate: true,
                             });
                           }}
@@ -297,14 +394,36 @@ export default function UploadPage() {
                         </Button>
                       </div>
                     ) : (
+                      // This is the NEW UI for the empty state
                       <div className="flex flex-col items-center justify-center text-center">
                         <UploadCloud className="w-16 h-16 text-muted-foreground" />
                         <p className="text-2xl font-semibold mt-4">
-                          Drag & drop files here
+                          Drag & drop files or folders
                         </p>
-                        <p className="text-muted-foreground">
-                          or click to select files
+                        <p className="text-muted-foreground mt-2">
+                          or use the buttons below
                         </p>
+                        <div className="flex gap-4 mt-6">
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              document.getElementById("file-input")?.click()
+                            }
+                            disabled={isUploading}
+                          >
+                            Select Files
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() =>
+                              document.getElementById("folder-input")?.click()
+                            }
+                            disabled={isUploading}
+                          >
+                            Select Folder
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
