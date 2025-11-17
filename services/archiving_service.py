@@ -140,6 +140,9 @@ def _create_metadata(user_id, file_id_str, s3_url, final_filename, original_file
         "size": file_size
     }
     
+    # Save to MongoDB
+    save_metadata(metadata)
+    
     # Index in Elasticsearch
     _index_to_elasticsearch(file_id_str, metadata)
 
