@@ -1,20 +1,13 @@
-# Environment variables
-# ----------------------------------
-# Prevent secrets and local configurations from being committed.
+# Environments
 .env
-*.env
+.env.*
+!.env.example
 
-# Python artifacts
-# ----------------------------------
-# Byte-compiled / optimized / C extensions
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
+*.pyc
+*.pyo
+*.pyd
 .Python
 build/
 develop-eggs/
@@ -32,29 +25,39 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+instance/
+.webassets-cache
 
-# Virtual Environments
-# ----------------------------------
-.venv/
+# Virtualenv
+.venv
 venv/
 env/
 virtualenv/
 
-# IDE / Editor folders
-# ----------------------------------
+# Databases
+*.sqlite3
+*.db
+
+# Logs
+*.log
+
+# IDEs
 .vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
 
-# Testing / Coverage
-# ----------------------------------
+# Testing
 .pytest_cache/
 .coverage
 .tox/
 htmlcov/
 
-# OS-specific files
-# ----------------------------------
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
