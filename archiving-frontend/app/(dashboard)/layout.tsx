@@ -42,7 +42,9 @@ export default function DashboardLayout({
   // 3. Render the protected layout (only if user exists and not loading)
   return (
     <div className="flex min-h-screen w-full">
-      <Sidebar />
+      <div className="hidden md:flex">
+        <Sidebar />
+      </div>
       <div className="flex-1 flex flex-col">
         <Header user={user} onLogout={logout} />
         <main className="flex-1 p-6 md:p-10">{children}</main>
