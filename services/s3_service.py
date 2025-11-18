@@ -132,3 +132,30 @@ def abort_multipart_upload(upload_id, filename):
     except ClientError as e:
         print(f"!!! S3 Client Error aborting upload: {e}")
         # Don't raise here, as this is a cleanup function
+
+def upload_profile_picture(file_obj, user_id, content_type):
+    """
+    Uploads a user's profile picture to a specific folder in S3.
+    The filename will be the user's ID to ensure uniqueness.
+    """
+    if not S3_BUCKET_NAME:
+        raise ValueError("S3_BUCKET_NAME is not configured.")
+
+    s3_key = f"profile-pictures/{user_id}"
+
+    try:
+        s3_client.upload_fileobj(
+            file_obj,
+            S3_BUCKET_NAME,
+            s3_key,
+            ExtraArgs={'ContentType': content_type}
+        )
+        s3_url = f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+        return s3_url
+    except NoCredentialsError:
+        print("!!! S3 Critical Error: Credentials not available.")
+        raise ValueError("Server is not configured with valid S3 credentials.")
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        print(f"!!! S3 Client Error ({error_code}): {e.response['Error']['Message']}")
+        raise ValueError(f"An S3 error occurred: {error_code}")

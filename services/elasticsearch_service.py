@@ -66,8 +66,8 @@ def index_document(document):
         print(f"❌ Error indexing document in Elasticsearch: {e}", flush=True)
         raise
 
-def search_documents(user_id, query_string, tags=None, start_date=None, end_date=None, size=10):
-    """Search documents in Elasticsearch with advanced filtering"""
+def search_documents(user_id, query_string, tags=None, start_date=None, end_date=None, size=10, sort_by='archived_at', sort_order='desc'):
+    """Search documents in Elasticsearch with advanced filtering and sorting"""
     try:
         must_queries = []
         if query_string:
@@ -96,6 +96,20 @@ def search_documents(user_id, query_string, tags=None, start_date=None, end_date
         if date_range:
             filters.append({"range": {"archived_at": date_range}})
 
+        # --- DYNAMIC SORTING ---
+        sort_field = "archived_at" # Default
+        if sort_by in ["filename", "size", "archived_at"]:
+             # For text fields like filename, we sort on the .keyword variant if available
+            if sort_by == "filename":
+                sort_field = "filename.keyword"
+            else:
+                sort_field = sort_by
+
+        order = "desc" if sort_order.lower() == "desc" else "asc"
+        
+        sort_config = [{sort_field: {"order": order}}]
+        # --- END DYNAMIC SORTING ---
+
         search_body = {
             "query": {
                 "bool": {
@@ -104,9 +118,7 @@ def search_documents(user_id, query_string, tags=None, start_date=None, end_date
                 }
             },
             "size": size,
-            "sort": [
-                {"archived_at": {"order": "desc"}}
-            ]
+            "sort": sort_config
         }
         
         response = es_client.search(index=INDEX_NAME, body=search_body)

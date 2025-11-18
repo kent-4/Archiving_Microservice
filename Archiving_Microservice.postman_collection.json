@@ -1,0 +1,315 @@
+{
+	"info": {
+		"_postman_id": "a8123a8a-a899-47f3-9399-a795d32e3a3b",
+		"name": "Archiving Microservice",
+		"description": "A collection to test the large file multipart upload flow. Now with automatic CSRF handling and a search request.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Auth - Login",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"// This script runs after the request is complete.",
+							"console.log('Login response received.');",
+							"",
+							"// Automatically find the csrf_access_token from the response cookies",
+							"const csrfCookie = pm.cookies.get('csrf_access_token');",
+							"",
+							"if (csrfCookie) {",
+							"    pm.collectionVariables.set(\"csrf_token\", csrfCookie);",
+							"    console.log(\"Success: CSRF Token captured and saved as 'csrf_token' variable.\");",
+							"} else {",
+							"    console.error(\"Error: Could not find 'csrf_access_token' in the response cookies. Make sure JWT_COOKIE_CSRF_PROTECT is enabled in the backend.\");",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"email\": \"demo@example.com\",\n    \"password\": \"password123\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:5000/auth/login",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "5000",
+					"path": [
+						"auth",
+						"login"
+					]
+				},
+				"description": "Logs in a user to get the authentication cookie. Postman will automatically handle the cookie for subsequent requests.\n\nPlease replace the email and password with valid credentials for your backend."
+			},
+			"response": []
+		},
+		{
+			"name": "2. Large File - Start Upload",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();",
+							"pm.collectionVariables.set(\"uploadId\", response.uploadId);",
+							"console.log('Upload ID set to: ' + response.uploadId);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-CSRF-TOKEN",
+						"value": "{{csrf_token}}",
+						"type": "text",
+						"description": "Required for CSRF protection on cookie-based auth."
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"filename\": \"{{large_filename}}\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:5000/archive/start-upload",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "5000",
+					"path": [
+						"archive",
+						"start-upload"
+					]
+				},
+				"description": "Starts the multipart upload process. This will return an `uploadId` which is automatically saved as a collection variable.\n\nYou must set the `large_filename` collection variable before running this."
+			},
+			"response": []
+		},
+		{
+			"name": "3. Large File - Get Part URL",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const response = pm.response.json();",
+							"pm.collectionVariables.set(\"presigned_url_part_1\", response.url);",
+							"console.log('Pre-signed URL for Part 1 set to: ' + response.url);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-CSRF-TOKEN",
+						"value": "{{csrf_token}}",
+						"type": "text",
+						"description": "Required for CSRF protection on cookie-based auth."
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"filename\": \"{{large_filename}}\",\n    \"uploadId\": \"{{uploadId}}\",\n    \"partNumber\": 1\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:5000/archive/get-upload-part-url",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "5000",
+					"path": [
+						"archive",
+						"get-upload-part-url"
+					]
+				},
+				"description": "Gets a pre-signed URL for a single part (chunk) of the file.\n\nThis example is for `partNumber: 1`. The URL is saved to the `presigned_url_part_1` collection variable."
+			},
+			"response": []
+		},
+		{
+			"name": "4. S3 - Upload Part to S3 (Manual Step)",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"// This script forcefully removes the Content-Type header that Postman tries to auto-generate.",
+							"pm.request.headers.remove('Content-Type');"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "binary",
+					"binary": {}
+				},
+				"url": {
+					"raw": "{{presigned_url_part_1}}",
+					"host": [
+						"{{presigned_url_part_1}}"
+					]
+				},
+				"description": "**THIS IS A MANUAL STEP.**\n\n1. Copy the `presigned_url_part_1` variable value and paste it as the URL for this request.\n2. Go to the 'Body' tab and select 'binary'.\n3. Click 'Select File' and choose the actual file you want to upload. \n4. The Pre-request Script will automatically remove the Content-Type header.\n5. Send the request.\n6. After the upload is successful (you should get a 200 OK response), go to the 'Headers' tab in the **response** section.\n7. Find the `ETag` header value (e.g., `\"a1b2c3d4...\"`).\n8. Copy this value (stripping the quotes) and set it as the value for the `etag_part_1` collection variable."
+			},
+			"response": []
+		},
+		{
+			"name": "5. Large File - Complete Upload",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-CSRF-TOKEN",
+						"value": "{{csrf_token}}",
+						"type": "text",
+						"description": "Required for CSRF protection on cookie-based auth."
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"filename\": \"{{large_filename}}\",\n    \"uploadId\": \"{{uploadId}}\",\n    \"parts\": [\n        {\n            \"ETag\": \"{{etag_part_1}}\",\n            \"PartNumber\": 1\n        }\n    ],\n    \"tags\": \"postman,test\",\n    \"policy\": \"standard-7\",\n    \"fileSize\": 12345678,\n    \"contentType\": \"{{file_content_type}}\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://localhost:5000/archive/complete-upload",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "5000",
+					"path": [
+						"archive",
+						"complete-upload"
+					]
+				},
+				"description": "Finalizes the multipart upload.\n\n- Make sure you have manually run Step 4 and set the `etag_part_1` variable from the S3 response.\n- **IMPORTANT**: Update the `fileSize` in the request body to match the actual size of the file/chunk you uploaded."
+			},
+			"response": []
+		},
+		{
+			"name": "6. Search - Search for Files",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-CSRF-TOKEN",
+						"value": "{{csrf_token}}",
+						"type": "text",
+						"description": "Required for CSRF protection on cookie-based auth."
+					}
+				],
+				"body": {},
+				"url": {
+					"raw": "http://localhost:5000/search?q=&tags=projects",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "5000",
+					"path": [
+						"search"
+					],
+					"query": [
+						{
+							"key": "q",
+							"value": "",
+							"description": "Full-text search query"
+						},
+						{
+							"key": "tags",
+							"value": "projects",
+							"description": "Comma-separated list of tags to filter by"
+						},
+						{
+							"key": "start_date",
+							"value": null,
+							"disabled": true
+						},
+						{
+							"key": "end_date",
+							"value": null,
+							"disabled": true
+						}
+					]
+				},
+				"description": "Searches for files. Edit the parameters in the 'Params' tab to test different queries.\n\nRemember to run the Login request first to get a valid session cookie."
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "large_filename",
+			"value": "my-large-test-file.zip",
+			"type": "string"
+		},
+		{
+			"key": "uploadId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "presigned_url_part_1",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "file_content_type",
+			"value": "application/octet-stream",
+			"type": "string"
+		},
+		{
+			"key": "etag_part_1",
+			"value": "PASTE_ETAG_FROM_S3_RESPONSE_HEADER_HERE",
+			"type": "string"
+		},
+		{
+			"key": "csrf_token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

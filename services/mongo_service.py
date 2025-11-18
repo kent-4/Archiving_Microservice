@@ -4,6 +4,7 @@ from pymongo import MongoClient, ASCENDING
 from pymongo.errors import PyMongoError
 from config import MONGO_URI, MONGO_DB_NAME
 import certifi
+from bson.objectid import ObjectId
 
 # Initialize client and database
 client = None
@@ -92,16 +93,19 @@ def save_metadata(metadata):
         print(f"❌ Critical Error saving metadata to MongoDB: {e}")
         raise
 
-def find_metadata_by_id(file_id, user_id): # --- UPDATED ---
+def find_metadata_by_id(file_id, user_id=None): # --- UPDATED ---
     """
-    Finds a single metadata document by its file_id and user_id.
+    Finds a single metadata document by its file_id and optionally user_id.
     """
     if metadata_collection is None:
         raise Exception("MongoDB not initialized. Call initialize_mongodb() first.")
         
     try:
-        # --- UPDATED: Ensure user can only find their own files ---
-        metadata = metadata_collection.find_one({"file_id": file_id, "owner_id": user_id})
+        query = {"file_id": file_id}
+        if user_id:
+            query["owner_id"] = user_id
+        
+        metadata = metadata_collection.find_one(query)
         
         if metadata is not None:
             print(f"✅ Found metadata for file_id: {file_id}")
@@ -110,4 +114,29 @@ def find_metadata_by_id(file_id, user_id): # --- UPDATED ---
         return metadata
     except PyMongoError as e:
         print(f"❌ Critical Error finding metadata in MongoDB: {e}")
+        raise
+
+def find_user_by_id(user_id):
+    """Finds a single user by their MongoDB _id."""
+    if user_collection is None:
+        raise Exception("MongoDB not initialized.")
+    try:
+        user = user_collection.find_one({"_id": ObjectId(user_id)})
+        return user
+    except Exception as e:
+        print(f"❌ Error finding user by ID: {e}")
+        raise
+
+def update_user_profile(user_id, update_data):
+    """Updates a user's profile data."""
+    if user_collection is None:
+        raise Exception("MongoDB not initialized.")
+    try:
+        result = user_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        print(f"❌ Error updating user profile: {e}")
         raise

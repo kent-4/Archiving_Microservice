@@ -14,6 +14,8 @@ from flask_jwt_extended import (
 )
 from pymongo.errors import DuplicateKeyError
 from flask_cors import CORS
+from bson.objectid import ObjectId
+
 
 # --- SERVICE IMPORTS ---
 from services.archiving_service import (
@@ -126,6 +128,84 @@ def logout_user():
     response = jsonify({"message": "Logout successful."})
     unset_jwt_cookies(response) # Clear the HttpOnly cookie
     return response, 200
+
+# --- NEW: User Profile Endpoints ---
+@app.route('/user/me', methods=['GET'])
+@jwt_required()
+def get_current_user():
+    try:
+        current_user_id = get_jwt_identity()
+        user = mongo_service.find_user_by_id(current_user_id)
+
+        if user:
+            # Sanitize user data before sending
+            user_data = {
+                "email": user.get("email"),
+                "displayName": user.get("displayName"),
+                "profilePictureUrl": user.get("profilePictureUrl")
+            }
+            return jsonify(user_data), 200
+        else:
+            return jsonify({"error": "User not found."}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error fetching current user: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/user/profile', methods=['PUT'])
+@jwt_required()
+def update_user_profile():
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        update_data = {}
+        if 'displayName' in data:
+            update_data['displayName'] = data['displayName']
+
+        if not update_data:
+            return jsonify({"error": "No update data provided."}), 400
+
+        updated_user = mongo_service.update_user_profile(current_user_id, update_data)
+
+        if updated_user:
+            return jsonify({"message": "Profile updated successfully."}), 200
+        else:
+            return jsonify({"error": "User not found or update failed."}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error updating user profile: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/user/profile-picture', methods=['POST'])
+@jwt_required()
+def upload_profile_picture():
+    try:
+        current_user_id = get_jwt_identity()
+        
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part in the request"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected for uploading"}), 400
+
+        # Upload to S3
+        s3_url = s3_service.upload_profile_picture(
+            file_obj=file,
+            user_id=current_user_id,
+            content_type=file.mimetype
+        )
+        
+        # Update user document in MongoDB
+        mongo_service.update_user_profile(current_user_id, {'profilePictureUrl': s3_url})
+        
+        return jsonify({"message": "Profile picture updated successfully.", "url": s3_url}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error uploading profile picture: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+# --- END NEW USER PROFILE ENDPOINTS ---
 
 # --- THIS IS THE "SMALL FILE" ENDPOINT ---
 @app.route('/archive', methods=['POST'])
@@ -293,6 +373,8 @@ def handle_search():
     tags = [tag.strip().lower() for tag in tags_str.split(',') if tag.strip()] or None
     start_date = request.args.get('start_date') # Expects ISO format (YYYY-MM-DD)
     end_date = request.args.get('end_date')
+    sort_by = request.args.get('sort_by', 'archived_at')
+    sort_order = request.args.get('sort_order', 'desc')
     # --- END NEW ---
 
     try:
@@ -302,7 +384,9 @@ def handle_search():
             query_string=query_string,
             tags=tags,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            sort_by=sort_by,
+            sort_order=sort_order
         )
         return jsonify(results), 200
     except Exception as e:
@@ -322,32 +406,94 @@ def handle_get_stats():
         return jsonify({"error": "An internal error occurred."}), 500
 
 @app.route('/dashboard/recent', methods=['GET'])
+
 @jwt_required()
+
 def handle_get_recent():
+
     current_user_id = get_jwt_identity()
+
     try:
+
         # Get top 5 recent
+
         recent_files = elasticsearch_service.get_recent_documents(current_user_id, size=5)
+
         return jsonify(recent_files), 200
+
     except Exception as e:
+
         app.logger.error(f"An error occurred getting recent files: {e}")
+
         return jsonify({"error": "An internal error occurred."}), 500
+
+
+
+@app.route('/api/download/<file_id>', methods=['GET'])
+@app.route('/api/download2/<file_id>', methods=['GET'])
+@jwt_required()
+def download_file(file_id):
+
+    try:
+
+        current_user_id = get_jwt_identity()
+
+        
+
+        # Get the download URL from the archiving service
+
+        file_data = get_archived_file(file_id, user_id=current_user_id)
+
+        
+
+        if file_data and 'download_url' in file_data:
+
+            return jsonify({'download_url': file_data['download_url']}), 200
+
+        else:
+
+            return jsonify({"error": "File not found or you do not have permission"}), 404
+
+            
+
+    except Exception as e:
+
+        app.logger.error(f"An error occurred generating download link for {file_id}: {e}")
+
+        return jsonify({"error": "An internal error occurred."}), 500
+
 # --- END NEW DASHBOARD ENDPOINTS ---
 
 
+
+
+
 def connect_to_elasticsearch_with_retry():
+
     # ... (this function remains the same)
+
     retries = 5
+
     delay = 5  # seconds
+
     for i in range(retries):
+
         try:
+
             elasticsearch_service.create_index_if_not_exists()
+
             print("✅ Successfully connected to Elasticsearch and ensured index exists.")
+
             return True
+
         except ESConnectionError as e:
+
             print(f"❌ Elasticsearch connection failed (attempt {i+1}/{retries}): {e}. Retrying in {delay} seconds...")
+
             time.sleep(delay)
+
     print("❌ Critical Error: Could not connect to Elasticsearch after several retries.")
+
     return False
 
 def connect_to_mongodb_with_retry():
