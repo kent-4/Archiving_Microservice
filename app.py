@@ -1,18 +1,13 @@
 from flask import Flask, request, jsonify
-from functools import wraps
 from config import SECRET_API_KEY 
 import time
 import datetime
-import os # <-- Make sure os is imported
-import uuid # <-- Make sure uuid is imported
+import os
 
 # --- NEW IMPORTS FOR AUTH ---
-from flask_bcrypt import Bcrypt
 from flask_jwt_extended import (
-    create_access_token, get_jwt_identity, jwt_required, JWTManager,
-    set_access_cookies, unset_jwt_cookies 
+    get_jwt_identity, jwt_required, JWTManager
 )
-from pymongo.errors import DuplicateKeyError
 from flask_cors import CORS
 from bson.objectid import ObjectId
 
@@ -26,7 +21,10 @@ from services.archiving_service import (
 from services import (
     elasticsearch_service, 
     mongo_service,
-    s3_service # <-- IMPORTED
+    s3_service, # <-- IMPORTED
+    redis_service,
+    email_service,
+    auth_service
 )
 from prometheus_flask_exporter import PrometheusMetrics
 from prometheus_client import Counter
@@ -34,21 +32,20 @@ from elasticsearch import Elasticsearch, ConnectionError as ESConnectionError
 
 app = Flask(__name__)
 
-origins = [
-    "http://localhost:3000", # For dev
-    "http://localhost:3001", # For your dev
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
     "http://127.0.0.1:3000",
-    # "https://your-production-domain.com" # For production
+    os.getenv("FRONTEND_URL") # We will set this Env Var in Vercel later
 ]
-CORS(app, supports_credentials=True, origins=origins)
+CORS(app, supports_credentials=True, origins=allowed_origins)
 
 app.config["JWT_SECRET_KEY"] = SECRET_API_KEY 
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(days=1)
 app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
-app.config["JWT_COOKIE_CSRF_PROTECT"] = True 
-app.config["JWT_COOKIE_SAMESITE"] = "Lax"
-
-bcrypt = Bcrypt(app)
+app.config["JWT_COOKIE_CSRF_PROTECT"] = False # Often causes issues in serverless if not tuned perfectly; consider disabling for initial deploy or ensure CSRF headers are sent by frontend.
+app.config["JWT_COOKIE_SAMESITE"] = "None" # CRITICAL: Required for cross-site (frontend.vercel.app -> backend.vercel.app)
+app.config["JWT_COOKIE_SECURE"] = True     # CRITICAL: Required for SameSite=None
 jwt = JWTManager(app)
 
 metrics = PrometheusMetrics(app)
@@ -58,76 +55,25 @@ FILES_ARCHIVED_COUNTER = Counter('files_archived_total', 'Total number of files 
 # --- NEW: Auth Endpoints ---
 @app.route('/auth/register', methods=['POST'])
 def register_user():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-
-        if not email or not password:
-            return jsonify({"error": "Email and password are required."}), 400
-
-        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-        
-        user_collection = mongo_service.get_user_collection()
-        user_collection.insert_one({
-            "email": email,
-            "password": hashed_password,
-            "created_at": datetime.datetime.now(datetime.timezone.utc)
-        })
-        
-        return jsonify({"message": "User registered successfully."}), 201
-        
-    except DuplicateKeyError:
-        return jsonify({"error": "Email already exists."}), 400
-    except Exception as e:
-        app.logger.error(f"Error during registration: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
+    return auth_service.register_user(request.get_json())
 
 @app.route('/auth/login', methods=['POST'])
 def login_user():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-
-        if not email or not password:
-            return jsonify({"error": "Email and password are required."}), 400
-
-        user_collection = mongo_service.get_user_collection()
-        user = user_collection.find_one({"email": email})
-
-        if user and bcrypt.check_password_hash(user['password'], password):
-            # Create access token
-            access_token = create_access_token(identity=str(user['_id']))
-            
-            # --- THIS IS THE FIX ---
-            # 1. Create the JSON response body
-            response_body = {
-                "message": "Login successful.",
-                "user": {
-                    "email": user['email']
-                }
-            }
-            # 2. Create the response object
-            response = jsonify(response_body)
-            
-            # 3. Set the HttpOnly cookie on the response
-            set_access_cookies(response, access_token)
-            
-            return response, 200
-            # --- END FIX ---
-        else:
-            return jsonify({"error": "Invalid email or password."}), 401
-            
-    except Exception as e:
-        app.logger.error(f"Error during login: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
+    return auth_service.login_user(request.get_json())
 
 @app.route("/auth/logout", methods=["POST"])
 def logout_user():
-    response = jsonify({"message": "Logout successful."})
-    unset_jwt_cookies(response) # Clear the HttpOnly cookie
-    return response, 200
+    return auth_service.logout_user()
+
+@app.route('/auth/reset-password-request', methods=['POST'])
+def reset_password_request():
+    return auth_service.reset_password_request(request.get_json())
+
+@app.route('/auth/reset-password', methods=['POST'])
+def reset_password():
+    return auth_service.reset_password(request.get_json())
+
+
 
 # --- NEW: User Profile Endpoints ---
 @app.route('/user/me', methods=['GET'])

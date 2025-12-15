@@ -160,7 +160,7 @@ export default function LoginPage() {
                 )}
               />
               <Link
-                href="#"
+                href="/forgot-password"
                 className="text-sm text-primary hover:underline"
               >
                 Forgot password?

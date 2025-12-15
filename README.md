@@ -32,6 +32,14 @@ This project is an archiving microservice designed to store and manage historica
     AWS_ACCESS_KEY_ID="YOUR_AWS_KEY"
     AWS_SECRET_ACCESS_KEY="YOUR_AWS_SECRET"
     S3_BUCKET_NAME="your-s3-bucket-name"
+
+# Email Configuration
+SMTP_SERVER="smtp.example.com"
+SMTP_PORT=587
+SMTP_USERNAME="your-email@example.com"
+SMTP_PASSWORD="your-email-password"
+SENDER_EMAIL="noreply@example.com"
+
     ```
 
 4.  **Run the application:**
