@@ -38,6 +38,7 @@ origins = [
     "http://localhost:3000", # For dev
     "http://localhost:3001", # For your dev
     "http://127.0.0.1:3000",
+    os.getenv("FRONTEND_URL")
     # "https://your-production-domain.com" # For production
 ]
 CORS(app, supports_credentials=True, origins=origins)
@@ -45,8 +46,9 @@ CORS(app, supports_credentials=True, origins=origins)
 app.config["JWT_SECRET_KEY"] = SECRET_API_KEY 
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(days=1)
 app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
-app.config["JWT_COOKIE_CSRF_PROTECT"] = True 
-app.config["JWT_COOKIE_SAMESITE"] = "Lax"
+app.config["JWT_COOKIE_CSRF_PROTECT"] = False # Often causes issues in serverless if not tuned perfectly; consider disabling for initial deploy or ensure CSRF headers are sent by frontend.
+app.config["JWT_COOKIE_SAMESITE"] = "None" # CRITICAL: Required for cross-site (frontend.vercel.app -> backend.vercel.app)
+app.config["JWT_COOKIE_SECURE"] = True     # CRITICAL: Required for SameSite=None
 
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
