@@ -512,8 +512,7 @@ def connect_to_mongodb_with_retry():
     print("❌ Critical Error: Could not connect to MongoDB after several retries.")
     return False
 
-if __name__ == '__main__':
-    print("🚀 Starting application...")
+
     
     mongodb_connected = connect_to_mongodb_with_retry()
     if not mongodb_connected:
@@ -524,6 +523,8 @@ if __name__ == '__main__':
     if not elasticsearch_connected:
         print("❌ Failed to connect to Elasticsearch. Exiting...")
         exit(1)
-    
+        
+     if __name__ == '__main__':
+    print("🚀 Starting application...")
     print("✅ All services connected successfully!")
     app.run(host='0.0.0.0', port=5000)
