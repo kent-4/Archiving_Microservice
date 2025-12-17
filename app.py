@@ -38,7 +38,7 @@ origins = [
     "http://localhost:3000", # For dev
     "http://localhost:3001", # For your dev
     "http://127.0.0.1:3000",
-    "https://archiving-front.onrender.com/", # For render.com frontend
+    "https://archiving-front.onrender.com", # For render.com frontend
     # "https://your-production-domain.com" # For production
 ]
 CORS(app, supports_credentials=True, origins=origins)
