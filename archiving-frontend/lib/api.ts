@@ -14,7 +14,7 @@ function getCookie(name: string): string | null {
 }
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "https://archiving-backend.onrender.com/",
   withCredentials: true, // This correctly sends cookies
 });
 
