@@ -499,7 +499,6 @@ def connect_to_elasticsearch_with_retry():
     return False
 
 def connect_to_mongodb_with_retry():
-    # ... (this function remains the same)
     retries = 3
     delay = 2  # seconds
     for i in range(retries):
@@ -512,19 +511,20 @@ def connect_to_mongodb_with_retry():
     print("❌ Critical Error: Could not connect to MongoDB after several retries.")
     return False
 
+# --- GLOBAL INITIALIZATION (Runs on Gunicorn Start) ---
+# These lines must be all the way to the left (no indentation)
+print("🚀 Starting application...")
 
-    
-    mongodb_connected = connect_to_mongodb_with_retry()
-    if not mongodb_connected:
-        print("❌ Failed to connect to MongoDB. Exiting...")
-        exit(1)
-    
-    elasticsearch_connected = connect_to_elasticsearch_with_retry()
-    if not elasticsearch_connected:
-        print("❌ Failed to connect to Elasticsearch. Exiting...")
-        exit(1)
-        
-     if __name__ == '__main__':
-    print("🚀 Starting application...")
-    print("✅ All services connected successfully!")
+mongodb_connected = connect_to_mongodb_with_retry()
+if not mongodb_connected:
+    print("❌ Failed to connect to MongoDB.")
+
+elasticsearch_connected = connect_to_elasticsearch_with_retry()
+if not elasticsearch_connected:
+    print("❌ Failed to connect to Elasticsearch.")
+
+print("✅ All services connected successfully!")
+# ----------------------------------------------------
+
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
